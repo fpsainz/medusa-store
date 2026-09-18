@@ -46,7 +46,7 @@ export async function retrieveCart(cartId?: string, fields?: string) {
       },
       headers,
       next,
-      cache: "force-cache",
+      cache: "no-store",
     })
     .then(({ cart }: { cart: HttpTypes.StoreCart }) => cart)
     .catch(() => null)
@@ -252,6 +252,24 @@ export async function initiatePaymentSession(
       revalidateTag(cartCacheTag)
       return resp
     })
+    .catch(medusaError)
+}
+
+export async function updateMercadoPagoPaymentSession(
+  paymentSessionId: string,
+  data: Record<string, unknown>
+) {
+  const headers = {
+    ...(await getAuthHeaders()),
+  }
+
+  return sdk.client
+    .fetch(`/store/mercadopago/payment-sessions/${paymentSessionId}`, {
+      method: "POST",
+      body: data,
+      headers,
+    })
+    .then((resp) => resp)
     .catch(medusaError)
 }
 

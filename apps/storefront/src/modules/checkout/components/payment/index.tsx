@@ -1,9 +1,14 @@
 "use client"
 import { RadioGroup } from "@headlessui/react"
-import { isStripeLike, paymentInfoMap } from "@lib/constants"
+import {
+  isMercadoPago,
+  isStripeLike,
+  paymentInfoMap,
+} from "@lib/constants"
 import { initiatePaymentSession } from "@lib/data/cart"
 import { CheckCircleSolid, CreditCard } from "@medusajs/icons"
 import ErrorMessage from "@modules/checkout/components/error-message"
+import MercadoPagoPaymentContainer from "@modules/checkout/components/mercadopago-payment-container"
 import PaymentContainer, {
   StripePaymentContainer,
 } from "@modules/checkout/components/payment-container"
@@ -46,7 +51,7 @@ const Payment = ({
   const setPaymentMethod = async (method: string) => {
     setError(null)
     setSelectedPaymentMethod(method)
-    if (isStripeLike(method)) {
+    if (isStripeLike(method) || isMercadoPago(method)) {
       await initiatePaymentSession(cart, {
         provider_id: method,
       })
@@ -80,7 +85,9 @@ const Payment = ({
     setIsLoading(true)
     try {
       const shouldInputPaymentDetails =
-        isStripeLike(selectedPaymentMethod) && !activeSession
+        (isStripeLike(selectedPaymentMethod) ||
+          isMercadoPago(selectedPaymentMethod)) &&
+        !activeSession
 
       const checkActiveSession =
         activeSession?.provider_id === selectedPaymentMethod
@@ -156,6 +163,15 @@ const Payment = ({
                         setError={setError}
                         setPaymentComplete={setPaymentComplete}
                       />
+                    ) : isMercadoPago(paymentMethod.id) ? (
+                      <MercadoPagoPaymentContainer
+                        cart={cart}
+                        paymentProviderId={paymentMethod.id}
+                        selectedPaymentOptionId={selectedPaymentMethod}
+                        paymentInfoMap={paymentInfoMap}
+                        setError={setError}
+                        setPaymentComplete={setPaymentComplete}
+                      />
                     ) : (
                       <PaymentContainer
                         paymentInfoMap={paymentInfoMap}
@@ -194,12 +210,16 @@ const Payment = ({
             onClick={handleSubmit}
             isLoading={isLoading}
             disabled={
-              (isStripeLike(selectedPaymentMethod) && !paymentComplete) ||
+              ((isStripeLike(selectedPaymentMethod) ||
+                isMercadoPago(selectedPaymentMethod)) &&
+                !paymentComplete) ||
               (!selectedPaymentMethod && !paidByGiftcard)
             }
             data-testid="submit-payment-button"
           >
-            {!activeSession && isStripeLike(selectedPaymentMethod)
+            {!activeSession &&
+            (isStripeLike(selectedPaymentMethod) ||
+              isMercadoPago(selectedPaymentMethod))
               ? "Enter payment details"
               : "Continue to review"}
           </Button>

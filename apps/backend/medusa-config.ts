@@ -22,5 +22,21 @@ module.exports = defineConfig({
       jwtSecret: process.env.JWT_SECRET,
       cookieSecret: process.env.COOKIE_SECRET,
     }
-  }
+  },
+  modules: [
+    {
+      resolve: '@medusajs/medusa/payment',
+      options: {
+        providers: [
+          {
+            resolve: './src/modules/mercadopago',
+            id: 'mercadopago',
+            options: {
+              access_token: process.env.MERCADOPAGO_ACCESS_TOKEN,
+            },
+          },
+        ],
+      },
+    },
+  ],
 })
