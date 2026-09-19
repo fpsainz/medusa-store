@@ -445,12 +445,45 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
     }
   }
 
-  async getWebhookActionAndData(data: any): Promise<any> {
-    return {
+  async getWebhookActionAndData(payload: any): Promise<any> {
+    const sessionId =
+      typeof payload?.sessionId === 'string' && payload.sessionId ? payload.sessionId : ''
+
+    const notSupported = {
       action: 'not_supported',
       data: {
-        session_id: data?.session_id ?? data?.data?.id ?? '',
+        session_id: sessionId,
         amount: 0,
+      },
+    }
+
+    // The route already validated HMAC and resolved the session; here we only
+    // apply the existing status mapping to the state it already fetched from
+    // the Mercado Pago Order. No second network call, no container access.
+    if (!sessionId || payload?.data?.type !== 'order') {
+      return notSupported
+    }
+
+    const paymentStatus =
+      typeof payload?.paymentStatus === 'string' ? payload.paymentStatus : undefined
+    const orderStatus =
+      typeof payload?.orderStatus === 'string' ? payload.orderStatus : undefined
+
+    const status = this.getStatusFromGateway(paymentStatus, orderStatus)
+
+    if (status !== 'captured' && status !== 'authorized') {
+      return notSupported
+    }
+
+    if (typeof payload?.amount !== 'string' || payload.amount.trim().length === 0) {
+      return notSupported
+    }
+
+    return {
+      action: status,
+      data: {
+        session_id: sessionId,
+        amount: payload.amount,
       },
     }
   }
