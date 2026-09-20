@@ -29,8 +29,11 @@ module.exports = defineConfig({
       options: {
         providers: [
           {
+            // No `id` here: the registered provider token is `pp_${identifier}`
+            // (service.ts: static identifier = 'mercadopago') -> pp_mercadopago.
+            // Adding an `id` would append a `_<id>` suffix (see @medusajs/payment's
+            // provider loader) and reintroduce the pp_mercadopago_mercadopago duplication.
             resolve: './src/modules/mercadopago',
-            id: 'mercadopago',
             options: {
               access_token: process.env.MERCADOPAGO_ACCESS_TOKEN,
             },

@@ -29,7 +29,7 @@ export const paymentInfoMap: Record<
     title: "PayPal",
     icon: <PayPal />,
   },
-  pp_mercadopago_mercadopago: {
+  pp_mercadopago: {
     title: "Mercado Pago",
     icon: <CreditCard />,
   },
@@ -52,7 +52,7 @@ export const isPaypal = (providerId?: string) => {
 }
 
 export const isMercadoPago = (providerId?: string) => {
-  return providerId === "pp_mercadopago_mercadopago"
+  return providerId === "pp_mercadopago"
 }
 
 export const isManual = (providerId?: string) => {

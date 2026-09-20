@@ -11,12 +11,13 @@ import {
   WebhookSignatureValidator,
 } from "mercadopago"
 
-// Public URL segment (/hooks/payment/mercadopago). Independent from the
-// internal provider identifier below — translated at emit time so the
-// registered provider token (and all persisted provider_id data) never changes.
+// Public URL segment (/hooks/payment/mercadopago). Also the internal provider
+// identifier emitted on the event — the two are the same value by design, so
+// there is no public/internal translation to keep in sync. The registered
+// provider token (medusa-config.ts has no `id`, service.ts identifier is
+// "mercadopago") is pp_mercadopago.
 const MERCADOPAGO_PROVIDER_PARAM = "mercadopago"
-const MERCADOPAGO_INTERNAL_PROVIDER = "mercadopago_mercadopago"
-const MERCADOPAGO_PROVIDER_ID = "pp_mercadopago_mercadopago"
+const MERCADOPAGO_PROVIDER_ID = "pp_mercadopago"
 
 // Temporary diagnostic constant for the HMAC 401 investigation. Not a secret:
 // this is a public application_id already surfaced in the MP dashboard capture.
@@ -254,10 +255,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       {
         name: PaymentWebhookEvents.WebhookReceived,
         data: {
-          // Internal provider identifier, not the public URL segment: keeps
-          // PaymentModuleService resolving pp_mercadopago_mercadopago regardless
-          // of which public path the webhook arrived on.
-          provider: MERCADOPAGO_INTERNAL_PROVIDER,
+          provider,
           payload: {
             data: req.body,
             rawData: req.rawBody,

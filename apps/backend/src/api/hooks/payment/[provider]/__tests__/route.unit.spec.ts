@@ -66,7 +66,7 @@ describe("mercadopago webhook route override", () => {
     const listPaymentSessions = jest.fn(async () => [
       {
         id: "payses_123",
-        provider_id: "pp_mercadopago_mercadopago",
+        provider_id: "pp_mercadopago",
         status: "pending",
       },
     ])
@@ -366,8 +366,8 @@ describe("mercadopago webhook route override", () => {
     mockValidOrder()
     const { req, emit, listPaymentSessions } = buildReq()
     listPaymentSessions.mockResolvedValue([
-      { id: "payses_1", provider_id: "pp_mercadopago_mercadopago", status: "pending" },
-      { id: "payses_2", provider_id: "pp_mercadopago_mercadopago", status: "pending" },
+      { id: "payses_1", provider_id: "pp_mercadopago", status: "pending" },
+      { id: "payses_2", provider_id: "pp_mercadopago", status: "pending" },
     ])
     const res = buildRes()
 
@@ -409,7 +409,7 @@ describe("mercadopago webhook route override", () => {
       {
         name: PaymentWebhookEvents.WebhookReceived,
         data: {
-          provider: "mercadopago_mercadopago",
+          provider: "mercadopago",
           payload: expect.objectContaining({
             data: req.body,
             rawData: req.rawBody,
