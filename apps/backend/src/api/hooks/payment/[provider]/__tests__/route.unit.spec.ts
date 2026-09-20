@@ -288,6 +288,37 @@ describe("mercadopago webhook route override", () => {
     expect(res.sendStatus).toHaveBeenCalledWith(200)
   })
 
+  // dataId case handling: MercadoPago signs the HMAC manifest using data.id's
+  // original casing (mercadopago/sdk-nodejs PR #439, shipped in 3.2.0 and
+  // present in our installed 3.6.1, deliberately removed an internal
+  // .toLowerCase() from the manifest builder for this exact reason). The
+  // query string may carry mixed case (e.g. sandbox order ids like
+  // ORDTST...); that original case must reach the validator unchanged, and
+  // must also be preserved in Order.get() and the event payload.
+  it("passes dataId to the signature validator in its original case, preserved everywhere else", async () => {
+    mockValidSignature()
+    const MIXED_CASE_ID = "ORDTST01M2ZNA9X4H9JQ3QC29NYHN0VV"
+    mockValidOrder()
+    const { req, emit } = buildReq({ query: { "data.id": MIXED_CASE_ID } })
+    const res = buildRes()
+
+    await POST(req, res)
+
+    expect(validateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ dataId: MIXED_CASE_ID })
+    )
+    expect(orderGetMock).toHaveBeenCalledWith({ id: MIXED_CASE_ID })
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          payload: expect.objectContaining({ dataId: MIXED_CASE_ID }),
+        }),
+      }),
+      expect.anything()
+    )
+    expect(res.sendStatus).toHaveBeenCalledWith(200)
+  })
+
   // 9. body data.id differs from query data.id: query must be the source of truth for HMAC
   it("uses the query data.id for HMAC validation even if the body carries a different id", async () => {
     mockValidSignature()
