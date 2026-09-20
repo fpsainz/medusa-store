@@ -80,7 +80,7 @@ describe("mercadopago webhook route override", () => {
     }
 
     const req: any = {
-      params: { provider: "mercadopago_mercadopago" },
+      params: { provider: "mercadopago" },
       query: { "data.id": "789012" },
       headers: {
         "x-signature": VALID_SIGNATURE,

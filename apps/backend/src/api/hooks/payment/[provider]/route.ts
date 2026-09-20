@@ -11,8 +11,23 @@ import {
   WebhookSignatureValidator,
 } from "mercadopago"
 
-const MERCADOPAGO_PROVIDER_PARAM = "mercadopago_mercadopago"
+// Public URL segment (/hooks/payment/mercadopago). Independent from the
+// internal provider identifier below — translated at emit time so the
+// registered provider token (and all persisted provider_id data) never changes.
+const MERCADOPAGO_PROVIDER_PARAM = "mercadopago"
+const MERCADOPAGO_INTERNAL_PROVIDER = "mercadopago_mercadopago"
 const MERCADOPAGO_PROVIDER_ID = "pp_mercadopago_mercadopago"
+
+// Temporary diagnostic constant for the HMAC 401 investigation. Not a secret:
+// this is a public application_id already surfaced in the MP dashboard capture.
+// Remove alongside the diagnostic block below once the investigation concludes.
+const DIAGNOSTIC_KNOWN_TEST_APPLICATION_ID = "2066876906801435"
+
+// Structural-only checks (presence of a key), never the value, so this never
+// logs signature material. Matches the "key=value" pairs the SDK itself parses.
+function diagnosticHasSignatureKey(xSignature: string, key: string): boolean {
+  return new RegExp(`(?:^|,)\\s*${key}=`).test(xSignature)
+}
 
 type ResolvedSession = {
   sessionId: string
@@ -149,6 +164,43 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     WebhookSignatureValidator.validate({ xSignature, xRequestId, dataId, secret })
   } catch (err) {
     if (err instanceof InvalidWebhookSignatureError) {
+      // Temporary diagnostic for the HMAC 401 investigation. Logs only
+      // structural facts and boolean comparisons — never secret material,
+      // never the raw x-signature/ts/v1/x-request-id/data.id values.
+      try {
+        const logger = req.scope.resolve(ContainerRegistrationKeys.LOGGER)
+        const bodyApplicationId =
+          typeof (req.body as Record<string, unknown> | undefined)?.application_id === "string" ||
+          typeof (req.body as Record<string, unknown> | undefined)?.application_id === "number"
+            ? String((req.body as Record<string, unknown>).application_id)
+            : undefined
+        const bodyDataRaw = (req.body as Record<string, unknown> | undefined)?.data
+        const bodyDataId =
+          bodyDataRaw && typeof bodyDataRaw === "object" &&
+          (typeof (bodyDataRaw as Record<string, unknown>).id === "string" ||
+            typeof (bodyDataRaw as Record<string, unknown>).id === "number")
+            ? String((bodyDataRaw as Record<string, unknown>).id)
+            : undefined
+
+        logger.warn(
+          JSON.stringify({
+            event: "mercadopago_webhook_signature_diagnostic",
+            reason: (err as InstanceType<typeof InvalidWebhookSignatureError> & { reason?: string }).reason,
+            signatureHasTsKey: diagnosticHasSignatureKey(xSignature, "ts"),
+            signatureHasV1Key: diagnosticHasSignatureKey(xSignature, "v1"),
+            bodyApplicationIdPresent: bodyApplicationId !== undefined,
+            bodyApplicationIdMatchesKnownTestApp:
+              bodyApplicationId !== undefined
+                ? bodyApplicationId === DIAGNOSTIC_KNOWN_TEST_APPLICATION_ID
+                : undefined,
+            queryDataIdMatchesBodyDataId:
+              bodyDataId !== undefined ? dataId === bodyDataId : undefined,
+            bodyDataIdPresent: bodyDataId !== undefined,
+          })
+        )
+      } catch {
+        // Diagnostic logging must never affect the response path.
+      }
       res.sendStatus(401)
       return
     }
@@ -202,7 +254,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       {
         name: PaymentWebhookEvents.WebhookReceived,
         data: {
-          provider,
+          // Internal provider identifier, not the public URL segment: keeps
+          // PaymentModuleService resolving pp_mercadopago_mercadopago regardless
+          // of which public path the webhook arrived on.
+          provider: MERCADOPAGO_INTERNAL_PROVIDER,
           payload: {
             data: req.body,
             rawData: req.rawBody,
