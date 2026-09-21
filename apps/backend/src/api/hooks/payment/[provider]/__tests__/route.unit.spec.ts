@@ -288,14 +288,15 @@ describe("mercadopago webhook route override", () => {
     expect(res.sendStatus).toHaveBeenCalledWith(200)
   })
 
-  // dataId case handling: MercadoPago signs the HMAC manifest using data.id's
-  // original casing (mercadopago/sdk-nodejs PR #439, shipped in 3.2.0 and
-  // present in our installed 3.6.1, deliberately removed an internal
-  // .toLowerCase() from the manifest builder for this exact reason). The
-  // query string may carry mixed case (e.g. sandbox order ids like
-  // ORDTST...); that original case must reach the validator unchanged, and
-  // must also be preserved in Order.get() and the event payload.
-  it("passes dataId to the signature validator in its original case, preserved everywhere else", async () => {
+  // dataId case handling: the generic SDK validator preserves whatever case
+  // it's given, but the Orders API's own notifications documentation still
+  // requires an alphanumeric data.id to be lowercased before it's used in
+  // the HMAC manifest — confirmed by two real Orders webhooks from the test
+  // application, whose received signature only matched the lowercase
+  // variant. So only the value handed to the validator is lowercased; the
+  // query string's original case (e.g. sandbox order ids like ORDTST...)
+  // must still reach Order.get() and the event payload unchanged.
+  it("lowercases dataId only for signature validation, preserving the original case elsewhere", async () => {
     mockValidSignature()
     const MIXED_CASE_ID = "ORDTST01M2ZNA9X4H9JQ3QC29NYHN0VV"
     mockValidOrder()
@@ -305,7 +306,7 @@ describe("mercadopago webhook route override", () => {
     await POST(req, res)
 
     expect(validateMock).toHaveBeenCalledWith(
-      expect.objectContaining({ dataId: MIXED_CASE_ID })
+      expect.objectContaining({ dataId: MIXED_CASE_ID.toLowerCase() })
     )
     expect(orderGetMock).toHaveBeenCalledWith({ id: MIXED_CASE_ID })
     expect(emit).toHaveBeenCalledWith(

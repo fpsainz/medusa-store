@@ -151,15 +151,20 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   }
 
   try {
-    // mercadopago/sdk-nodejs PR #439 (shipped in 3.2.0, present in our
-    // installed 3.6.1) removed an internal .toLowerCase() from this
-    // validator's manifest building specifically because MercadoPago signs
-    // webhook notifications using data.id's original casing — lowercasing it
-    // here would reintroduce the exact bug that PR fixed.
+    // The generic mercadopago/sdk-nodejs 3.6.1 validator no longer lowercases
+    // dataId internally (it preserves whatever case the caller passes it).
+    // That default is correct for traditional Payments notifications, but
+    // the Orders API's own notifications documentation still explicitly
+    // requires an alphanumeric data.id to be lowercased before it's used in
+    // the HMAC manifest — confirmed by two real Orders webhooks from the
+    // test application, whose received signature only matched the lowercase
+    // variant of their data.id. So we lowercase only the value handed to the
+    // validator; every other use of dataId below (Order.get(), correlation,
+    // the event payload) keeps the original case as received.
     WebhookSignatureValidator.validate({
       xSignature,
       xRequestId,
-      dataId,
+      dataId: dataId.toLowerCase(),
       secret,
     })
   } catch (err) {
