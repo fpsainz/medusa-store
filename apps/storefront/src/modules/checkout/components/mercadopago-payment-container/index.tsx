@@ -100,11 +100,6 @@ const MercadoPagoPaymentContainer: React.FC<MercadoPagoPaymentContainerProps> = 
   }, [shouldRenderBrick, paymentProviderId])
 
   const onSubmit = useCallback(async (rawArgs: any) => {
-    console.log(
-      "[MP DEBUG] onSubmit INVOKED",
-      JSON.stringify(rawArgs, null, 2)
-    )
-
     const { formData } = rawArgs as {
       selectedPaymentMethod?: string
       formData: {
@@ -122,8 +117,6 @@ const MercadoPagoPaymentContainer: React.FC<MercadoPagoPaymentContainerProps> = 
         }
       }
     }
-
-    console.log("[MP DEBUG] onSubmit formData:", formData)
 
     const currentSession = paymentSessionRef.current
     if (!currentSession) {
@@ -174,27 +167,12 @@ const MercadoPagoPaymentContainer: React.FC<MercadoPagoPaymentContainerProps> = 
           },
         }
 
-    console.log("[MP DEBUG] BEFORE SERVER ACTION", {
-      paymentSessionId: currentSession.id,
-      payload: {
-        ...payload,
-        payer: {
-          ...payload.payer,
-          email: payload.payer?.email ? "[MASKED]" : payload.payer?.email,
-        },
-      },
-    })
-
     await updateMercadoPagoPaymentSession(currentSession.id, payload)
-      .then(async (result) => {
-        console.log("[MP DEBUG] AFTER SERVER ACTION", result)
+      .then(() => {
         setError(null)
-        console.log("[MP FLOW] onSubmit DONE")
         setPaymentComplete(true)
-        console.log("[MP FLOW] setPaymentComplete TRUE")
       })
       .catch((err: Error) => {
-        console.error("[MP DEBUG] SERVER ACTION ERROR", err)
         setPaymentComplete(false)
         setError(err.message || "Unable to authorize the Mercado Pago payment.")
       })

@@ -26,13 +26,27 @@ type ResolvedSession = {
   status: string
 }
 
-// cart_id -> PaymentCollection -> PaymentSession, using req.scope (root container),
-// never the provider's own container (confirmed isolated in prior investigation).
+type SessionResolution =
+  | { kind: "matched"; session: ResolvedSession }
+  | { kind: "not_found" }
+  | { kind: "ambiguous" }
+
+// Finds the Payment Session that owns this exact Mercado Pago Order.
+//
+// The Order's external_reference (written by the provider, returned by the
+// authenticated GET /v1/orders/{id}) only narrows the search to that cart's
+// payment collection. The session is then selected strictly by
+// data.mercadopago_order_id === the notified Order id — never "the cart's
+// Mercado Pago session" in general. So a notification for an old/replaced
+// Order A can never reach the session that now holds Order B.
+//
+// Uses req.scope (root container), never the provider's own container.
 // Does not filter by PaymentSession status by design.
-async function resolveSessionId(
+async function resolveSessionForOrder(
+  mercadoPagoOrderId: string,
   cartId: string,
   req: MedusaRequest
-): Promise<ResolvedSession | null> {
+): Promise<SessionResolution> {
   const query = req.scope.resolve(ContainerRegistrationKeys.QUERY)
 
   const { data } = await query.graph(
@@ -47,32 +61,53 @@ async function resolveSessionId(
 
   const paymentCollectionId = cart?.payment_collection?.id
   if (!paymentCollectionId) {
-    return null
+    return { kind: "not_found" }
   }
 
   const paymentModuleService = req.scope.resolve(Modules.PAYMENT)
 
-  const sessions = await paymentModuleService.listPaymentSessions({
-    payment_collection_id: paymentCollectionId,
-    provider_id: MERCADOPAGO_PROVIDER_ID,
-  })
+  const sessions = await paymentModuleService.listPaymentSessions(
+    {
+      payment_collection_id: paymentCollectionId,
+      provider_id: MERCADOPAGO_PROVIDER_ID,
+    },
+    { select: ["id", "provider_id", "status", "data"] }
+  )
 
-  if (sessions.length === 0 || sessions.length > 1) {
-    return null
+  const matches = sessions.filter(
+    (session) =>
+      Boolean(session.id) &&
+      session.provider_id === MERCADOPAGO_PROVIDER_ID &&
+      (session.data as Record<string, unknown> | null | undefined)?.mercadopago_order_id ===
+        mercadoPagoOrderId
+  )
+
+  if (matches.length === 0) {
+    return { kind: "not_found" }
   }
 
-  const session = sessions[0]
-
-  if (!session.id || session.provider_id !== MERCADOPAGO_PROVIDER_ID) {
-    return null
+  if (matches.length > 1) {
+    return { kind: "ambiguous" }
   }
+
+  const session = matches[0]
 
   return {
-    sessionId: session.id,
-    paymentCollectionId,
-    providerId: session.provider_id,
-    status: session.status,
+    kind: "matched",
+    session: {
+      sessionId: session.id,
+      paymentCollectionId,
+      providerId: session.provider_id,
+      status: session.status,
+    },
   }
+}
+
+// Paid from Mercado Pago's point of view (same states the provider maps to
+// captured/authorized).
+function isPaidOrder(orderStatus?: string, paymentStatus?: string): boolean {
+  const paid = new Set(["processed", "approved", "authorized"])
+  return paid.has(orderStatus?.toLowerCase() ?? "") || paid.has(paymentStatus?.toLowerCase() ?? "")
 }
 
 function getSingleQueryValue(value: unknown): string | undefined {
@@ -199,22 +234,49 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  let resolved: ResolvedSession | null
+  const logger = req.scope.resolve(ContainerRegistrationKeys.LOGGER)
+  const payment = order.transactions?.payments?.[0]
+
+  let resolution: SessionResolution
   try {
-    resolved = await resolveSessionId(cartId, req)
+    resolution = await resolveSessionForOrder(dataId, cartId, req)
   } catch (err) {
     res.sendStatus(503)
     return
   }
 
-  if (!resolved) {
-    // external_reference present but no matching Cart/PaymentCollection/PaymentSession:
-    // possible race with the synchronous checkout flow, or a local inconsistency.
+  if (resolution.kind === "ambiguous") {
+    // More than one session claims the same Mercado Pago Order: never guess.
+    logger.error(
+      `Mercado Pago webhook: order ${dataId} is attached to more than one payment session of cart ${cartId}; not processed`
+    )
     res.sendStatus(503)
     return
   }
 
-  const payment = order.transactions?.payments?.[0]
+  if (resolution.kind === "not_found") {
+    if (isPaidOrder(order.status, payment?.status)) {
+      // A paid Order no session holds (yet): either the session has not
+      // persisted this Order id (e.g. card authorization still inside
+      // completeCart) — Mercado Pago retries — or a paid charge detached
+      // from any session, which needs manual review.
+      logger.warn(
+        `Mercado Pago webhook: paid order ${dataId} (cart ${cartId}) has no payment session holding it; responding 503 for retry`
+      )
+      res.sendStatus(503)
+      return
+    }
+
+    // Not paid (old/replaced/cancelled/expired charge, or one never attached):
+    // nothing to process, and never attached to another session.
+    logger.info(
+      `Mercado Pago webhook: order ${dataId} (status ${order.status ?? "unknown"}) is not held by any payment session of cart ${cartId}; acknowledged without processing`
+    )
+    res.sendStatus(200)
+    return
+  }
+
+  const resolved = resolution.session
   const rawAmount = payment?.paid_amount ?? payment?.amount
 
   try {

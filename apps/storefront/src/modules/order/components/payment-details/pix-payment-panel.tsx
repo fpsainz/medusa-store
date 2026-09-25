@@ -181,22 +181,6 @@ const PixPaymentPanel = ({
     onPlaceOrderAllowedChange?.(placeOrderAllowed)
   }, [placeOrderAllowed, onPlaceOrderAllowedChange])
 
-  useEffect(() => {
-    if (!pixCharge) {
-      return
-    }
-
-    console.log("[PIX UI DEBUG] PANEL MOUNT", {
-      status: pixCharge.status,
-      hasQrCode: Boolean(pixCharge.qr_code),
-      qrCodeLength: pixCharge.qr_code?.length ?? 0,
-      hasQrCodeBase64: Boolean(pixCharge.qr_code_base64),
-      qrCodeBase64Length: pixCharge.qr_code_base64?.length ?? 0,
-      hasTicketUrl: Boolean(pixCharge.ticket_url),
-      hasExpiration: Boolean(pixCharge.expires_at),
-    })
-  }, [pixCharge])
-
   const refreshStatus = async () => {
     const next = await retrieveCartPixPayment(cartId).catch(() => null)
     if (next) {
@@ -328,8 +312,6 @@ const PixPaymentPanel = ({
                     width={288}
                     height={288}
                     className="w-64 h-64 md:w-72 md:h-72"
-                    onLoad={() => console.log("[PIX UI DEBUG] QR IMG LOAD")}
-                    onError={() => console.log("[PIX UI DEBUG] QR IMG ERROR")}
                   />
                 </div>
               )}
@@ -393,8 +375,6 @@ const PixPaymentPanel = ({
           </Modal.Footer>
         </Modal>
       )}
-
-      {(console.log("[PIX UI DEBUG] PANEL READY"), null)}
     </div>
   )
 }

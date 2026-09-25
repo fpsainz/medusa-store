@@ -263,36 +263,14 @@ export async function updateMercadoPagoPaymentSession(
     ...(await getAuthHeaders()),
   }
 
-  const payer = data.payer as { email?: unknown } | undefined
-  console.log("[MP SERVER DEBUG] BEFORE MEDUSA FETCH", {
-    paymentSessionId,
-    data: {
-      ...data,
-      card_token: data.card_token ? "[MASKED]" : data.card_token,
-      payer: payer ? { ...payer, email: payer.email ? "[MASKED]" : payer.email } : payer,
-    },
-  })
-
   return sdk.client
     .fetch(`/store/mercadopago/payment-sessions/${paymentSessionId}`, {
       method: "POST",
       body: data,
       headers,
     })
-    .then((resp) => {
-      console.log("[MP SERVER DEBUG] MEDUSA FETCH RESPONSE", {
-        paymentSessionId,
-        response: resp,
-      })
-      return resp
-    })
-    .catch((error) => {
-      console.error("[MP SERVER DEBUG] MEDUSA FETCH ERROR", {
-        paymentSessionId,
-        error,
-      })
-      return medusaError(error)
-    })
+    .then((resp) => resp)
+    .catch(medusaError)
 }
 
 // State of the cart's Mercado Pago Pix charge as returned by the backend.
@@ -504,29 +482,18 @@ export async function placeOrder(cartId?: string) {
     throw new Error("No existing cart found when placing an order")
   }
 
-  console.log("[MP FLOW] placeOrder START", { cartId: id })
-
   const headers = {
     ...(await getAuthHeaders()),
   }
 
-  console.log("[MP FLOW] completeCart START", { cartId: id })
-
   const cartRes = await sdk.store.cart
     .complete(id, {}, headers)
     .then(async (cartRes) => {
-      console.log("[MP FLOW] completeCart RESPONSE", {
-        type: cartRes?.type,
-        orderId: cartRes?.type === "order" ? cartRes.order.id : undefined,
-      })
       const cartCacheTag = await getCacheTag("carts")
       revalidateTag(cartCacheTag)
       return cartRes
     })
-    .catch((err) => {
-      console.error("[MP FLOW] completeCart ERROR", { message: err?.message })
-      return medusaError(err)
-    })
+    .catch(medusaError)
 
   if (cartRes?.type === "order") {
     const countryCode =
@@ -536,10 +503,6 @@ export async function placeOrder(cartId?: string) {
     revalidateTag(orderCacheTag)
 
     removeCartId()
-    console.log("[MP FLOW] REDIRECT CONFIRMED", {
-      orderId: cartRes.order.id,
-      countryCode,
-    })
     redirect(`/${countryCode}/order/${cartRes?.order.id}/confirmed`)
   }
 

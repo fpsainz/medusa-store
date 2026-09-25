@@ -63,18 +63,21 @@ describe("mercadopago webhook route override", () => {
     const graph = jest.fn(async () => ({
       data: [{ id: "cart_123", payment_collection: { id: "paycol_123" } }],
     }))
-    const listPaymentSessions = jest.fn(async () => [
+    const listPaymentSessions = jest.fn(async (): Promise<unknown[]> => [
       {
         id: "payses_123",
         provider_id: "pp_mercadopago",
         status: "pending",
+        data: { mercadopago_order_id: "789012" },
       },
     ])
+    const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 
     const scopeState = {
       emit,
       graph,
       listPaymentSessions,
+      logger,
       paymentOptions: { webhook_delay: 5000, webhook_retries: 3 },
       ...overrides.scopeState as Record<string, unknown>,
     }
@@ -102,13 +105,16 @@ describe("mercadopago webhook route override", () => {
           if (key === ContainerRegistrationKeys.QUERY) {
             return { graph: scopeState.graph }
           }
+          if (key === ContainerRegistrationKeys.LOGGER) {
+            return scopeState.logger
+          }
           throw new Error(`Unexpected container key: ${key}`)
         },
       },
       ...overrides,
     }
 
-    return { req, emit, graph, listPaymentSessions }
+    return { req, emit, graph, listPaymentSessions, logger }
   }
 
   function buildRes() {
@@ -299,8 +305,16 @@ describe("mercadopago webhook route override", () => {
   it("lowercases dataId only for signature validation, preserving the original case elsewhere", async () => {
     mockValidSignature()
     const MIXED_CASE_ID = "ORDTST01M2ZNA9X4H9JQ3QC29NYHN0VV"
-    mockValidOrder()
-    const { req, emit } = buildReq({ query: { "data.id": MIXED_CASE_ID } })
+    mockValidOrder({ id: MIXED_CASE_ID })
+    const { req, emit, listPaymentSessions } = buildReq({ query: { "data.id": MIXED_CASE_ID } })
+    listPaymentSessions.mockResolvedValue([
+      {
+        id: "payses_123",
+        provider_id: "pp_mercadopago",
+        status: "pending",
+        data: { mercadopago_order_id: MIXED_CASE_ID },
+      },
+    ])
     const res = buildRes()
 
     await POST(req, res)
@@ -351,7 +365,7 @@ describe("mercadopago webhook route override", () => {
   })
 
   // 11. Cart not found
-  it("responds 503 and does not emit when the Cart is not found", async () => {
+  it("responds 503 (retry) and does not emit when a paid Order's Cart is not found", async () => {
     mockValidSignature()
     mockValidOrder()
     const { req, emit, graph } = buildReq()
@@ -365,7 +379,7 @@ describe("mercadopago webhook route override", () => {
   })
 
   // 12. PaymentCollection missing
-  it("responds 503 and does not emit when the Cart has no payment_collection", async () => {
+  it("responds 503 (retry) and does not emit when a paid Order's Cart has no payment_collection", async () => {
     mockValidSignature()
     mockValidOrder()
     const { req, emit, graph } = buildReq()
@@ -379,7 +393,7 @@ describe("mercadopago webhook route override", () => {
   })
 
   // 13. zero sessions
-  it("responds 503 and does not emit when no PaymentSession matches", async () => {
+  it("responds 503 (retry) and does not emit when no PaymentSession holds a paid Order", async () => {
     mockValidSignature()
     mockValidOrder()
     const { req, emit, listPaymentSessions } = buildReq()
@@ -392,14 +406,14 @@ describe("mercadopago webhook route override", () => {
     expect(emit).not.toHaveBeenCalled()
   })
 
-  // 14. multiple sessions
-  it("responds 503 and does not emit when multiple PaymentSessions match", async () => {
+  // 14. two sessions claim the same Mercado Pago Order: never guess
+  it("responds 503, logs an error and does not emit when two PaymentSessions hold the same Order", async () => {
     mockValidSignature()
     mockValidOrder()
-    const { req, emit, listPaymentSessions } = buildReq()
+    const { req, emit, listPaymentSessions, logger } = buildReq()
     listPaymentSessions.mockResolvedValue([
-      { id: "payses_1", provider_id: "pp_mercadopago", status: "pending" },
-      { id: "payses_2", provider_id: "pp_mercadopago", status: "pending" },
+      { id: "payses_1", provider_id: "pp_mercadopago", status: "pending", data: { mercadopago_order_id: "789012" } },
+      { id: "payses_2", provider_id: "pp_mercadopago", status: "pending", data: { mercadopago_order_id: "789012" } },
     ])
     const res = buildRes()
 
@@ -407,6 +421,7 @@ describe("mercadopago webhook route override", () => {
 
     expect(res.sendStatus).toHaveBeenCalledWith(503)
     expect(emit).not.toHaveBeenCalled()
+    expect(logger.error).toHaveBeenCalled()
   })
 
   // 15. defensive provider_id check on the resolved session
@@ -415,7 +430,7 @@ describe("mercadopago webhook route override", () => {
     mockValidOrder()
     const { req, emit, listPaymentSessions } = buildReq()
     listPaymentSessions.mockResolvedValue([
-      { id: "payses_1", provider_id: "pp_stripe_stripe", status: "pending" },
+      { id: "payses_1", provider_id: "pp_stripe_stripe", status: "pending", data: { mercadopago_order_id: "789012" } },
     ])
     const res = buildRes()
 
@@ -470,6 +485,144 @@ describe("mercadopago webhook route override", () => {
 
     expect(res.sendStatus).toHaveBeenCalledWith(502)
     expect(emit).not.toHaveBeenCalled()
+  })
+
+  describe("correlation by the notified Mercado Pago Order id", () => {
+    const CURRENT_ORDER = "ORD_B_CURRENT"
+    const OLD_ORDER = "ORD_A_OLD"
+
+    // The cart's single Mercado Pago session now holds Order B (Order A was
+    // replaced, e.g. expired and regenerated). Another provider's session is
+    // present too and must be ignored.
+    function sessionsHoldingCurrentOrder() {
+      return [
+        { id: "payses_current", provider_id: "pp_mercadopago", status: "pending", data: { mercadopago_order_id: CURRENT_ORDER } },
+        { id: "payses_other_provider", provider_id: "pp_stripe_stripe", status: "pending", data: { mercadopago_order_id: OLD_ORDER } },
+      ]
+    }
+
+    it("case 1 — current Order: emits for the session holding exactly that Order", async () => {
+      mockValidSignature()
+      mockValidOrder({ id: CURRENT_ORDER })
+      const { req, emit, listPaymentSessions } = buildReq({ query: { "data.id": CURRENT_ORDER } })
+      listPaymentSessions.mockResolvedValue(sessionsHoldingCurrentOrder())
+      const res = buildRes()
+
+      await POST(req, res)
+
+      expect(listPaymentSessions).toHaveBeenCalledWith(
+        { payment_collection_id: "paycol_123", provider_id: "pp_mercadopago" },
+        { select: ["id", "provider_id", "status", "data"] }
+      )
+      expect(emit).toHaveBeenCalledTimes(1)
+      expect((emit.mock.calls[0] as any)[0].data.payload.sessionId).toBe("payses_current")
+      expect(res.sendStatus).toHaveBeenCalledWith(200)
+    })
+
+    it.each([
+      ["cancelled", "canceled"],
+      ["expired", "expired"],
+      ["still pending", "action_required"],
+    ])(
+      "case 2 — old %s Order A: acks 200, never touches the session now holding Order B",
+      async (_label, status) => {
+        mockValidSignature()
+        mockValidOrder({
+          id: OLD_ORDER,
+          status,
+          status_detail: status,
+          transactions: { payments: [{ status, status_detail: status, amount: "130.00" }] },
+        })
+        const { req, emit, listPaymentSessions, logger } = buildReq({ query: { "data.id": OLD_ORDER } })
+        listPaymentSessions.mockResolvedValue(sessionsHoldingCurrentOrder())
+        const res = buildRes()
+
+        await POST(req, res)
+
+        expect(emit).not.toHaveBeenCalled()
+        expect(res.sendStatus).toHaveBeenCalledWith(200)
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining(OLD_ORDER))
+      }
+    )
+
+    it("case 2b — old Order A reported PAID: 503 for retry + warning, still never touches Order B's session", async () => {
+      mockValidSignature()
+      mockValidOrder({ id: OLD_ORDER })
+      const { req, emit, listPaymentSessions, logger } = buildReq({ query: { "data.id": OLD_ORDER } })
+      listPaymentSessions.mockResolvedValue(sessionsHoldingCurrentOrder())
+      const res = buildRes()
+
+      await POST(req, res)
+
+      expect(emit).not.toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(503)
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(OLD_ORDER))
+    })
+
+    it("case 3 — unknown Order pointing at a cart none of whose sessions hold it: not attached to that cart", async () => {
+      mockValidSignature()
+      mockValidOrder({
+        id: "ORD_UNKNOWN",
+        status: "action_required",
+        transactions: { payments: [{ status: "action_required", amount: "130.00" }] },
+      })
+      const { req, emit } = buildReq({ query: { "data.id": "ORD_UNKNOWN" } })
+      const res = buildRes()
+
+      await POST(req, res)
+
+      expect(emit).not.toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(200)
+    })
+
+    it("case 3b — a session without any Mercado Pago Order yet is never matched", async () => {
+      mockValidSignature()
+      mockValidOrder()
+      const { req, emit, listPaymentSessions } = buildReq()
+      listPaymentSessions.mockResolvedValue([
+        { id: "payses_new", provider_id: "pp_mercadopago", status: "pending", data: { payment_method_id: "pix" } },
+      ])
+      const res = buildRes()
+
+      await POST(req, res)
+
+      expect(emit).not.toHaveBeenCalled()
+    })
+
+    it("case 4 — the same notification twice: the route keeps no state and emits the same payload for the same session", async () => {
+      mockValidSignature()
+      mockValidOrder()
+      const first = buildReq()
+      const second = buildReq()
+
+      await POST(first.req, buildRes())
+      await POST(second.req, buildRes())
+
+      const payloadOf = (emit: jest.Mock) => (emit.mock.calls[0] as any)[0].data.payload
+      expect(payloadOf(first.emit).sessionId).toBe("payses_123")
+      expect(payloadOf(second.emit)).toEqual(payloadOf(first.emit))
+      // Duplicate processing is absorbed by Medusa core: authorizePaymentSession
+      // returns the existing Payment, capturePayment skips an already captured
+      // one, order transactions are de-duplicated by reference_id and
+      // completeCart returns the existing order (cart lock + order_cart).
+    })
+
+    it("case 7 — approved Order: emitted payload makes the provider return 'captured' for that session (native flow)", async () => {
+      mockValidSignature()
+      mockValidOrder({ id: CURRENT_ORDER })
+      const { req, emit, listPaymentSessions } = buildReq({ query: { "data.id": CURRENT_ORDER } })
+      listPaymentSessions.mockResolvedValue(sessionsHoldingCurrentOrder())
+      await POST(req, buildRes())
+
+      const payload = (emit.mock.calls[0] as any)[0].data.payload
+      const ProviderClass = MercadoPagoPaymentProviderService as any
+      const provider = new ProviderClass({}, { access_token: "test-access-token" })
+
+      await expect(provider.getWebhookActionAndData(payload)).resolves.toEqual({
+        action: "captured",
+        data: { session_id: "payses_current", amount: "130.00" },
+      })
+    })
   })
 })
 
