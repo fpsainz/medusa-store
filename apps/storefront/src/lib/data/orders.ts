@@ -2,6 +2,7 @@
 
 import { sdk } from "@lib/config"
 import medusaError from "@lib/util/medusa-error"
+import { FetchError } from "@medusajs/js-sdk"
 import { getAuthHeaders, getCacheOptions } from "./cookies"
 import { HttpTypes } from "@medusajs/types"
 
@@ -27,6 +28,49 @@ export const retrieveOrder = async (id: string) => {
     })
     .then(({ order }) => order)
     .catch((err) => medusaError(err))
+}
+
+export type PixPayment = {
+  status: string
+  qr_code?: string
+  qr_code_base64?: string
+  ticket_url?: string
+  expires_at?: string
+}
+
+// Pix QR/copy-paste/ticket_url/expiration are not part of the Order/Payment
+// the storefront otherwise fetches: while the Pix payment is
+// pending_authorization, Medusa hasn't materialized a Payment record yet,
+// only the (unsanitized) Payment Session. Rather than exposing
+// payment_sessions.data to the client (the previous, since-reverted
+// approach), this reads the allowlisted Pix DTO from a dedicated backend
+// endpoint that never returns the payer, any document/identification, the
+// idempotency key, or any other Mercado Pago internal id.
+//
+// Returns null, rather than throwing, when the order has no Mercado Pago
+// Pix session (e.g. it was paid by card, or with another provider) — that
+// is an expected, non-error outcome for this call, not a failure.
+export const retrievePixPayment = async (
+  orderId: string
+): Promise<PixPayment | null> => {
+  const headers = {
+    ...(await getAuthHeaders()),
+  }
+
+  return sdk.client
+    .fetch<PixPayment>(`/store/mercadopago/orders/${orderId}/pix`, {
+      method: "GET",
+      headers,
+      cache: "no-store",
+    })
+    .then((pixPayment) => pixPayment)
+    .catch((err) => {
+      if (err instanceof FetchError && err.status === 404) {
+        return null
+      }
+
+      return medusaError(err)
+    })
 }
 
 export const listOrders = async (

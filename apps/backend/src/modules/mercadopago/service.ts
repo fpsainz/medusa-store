@@ -9,6 +9,224 @@ type MercadoPagoProviderOptions = {
 
 type PaymentData = Record<string, unknown>
 
+// Presentation status of a Mercado Pago Pix charge, derived from the Orders
+// API's native order/transaction statuses. It is NOT a Medusa status: the
+// Medusa Payment Session / Payment / Order keep their own states. The native
+// Mercado Pago statuses are returned alongside it in the DTO.
+export type PixDisplayStatus =
+  | 'processing'
+  | 'pending'
+  | 'approved'
+  | 'expired'
+  | 'canceled'
+  | 'failed'
+  | 'rejected'
+  | 'refunded'
+  | 'charged_back'
+  | 'unknown'
+
+export const PIX_TERMINAL_STATUSES: readonly PixDisplayStatus[] = [
+  'approved',
+  'expired',
+  'canceled',
+  'failed',
+  'rejected',
+  'refunded',
+  'charged_back',
+]
+
+// Session data fields that describe the Mercado Pago Pix Order currently
+// attached to a Payment Session. Removed together when that Order stops
+// being the session's charge (payment method switched, or replaced).
+const PIX_ORDER_FIELDS = [
+  'mercadopago_order_id',
+  'mercadopago_order_status',
+  'mercadopago_order_status_detail',
+  'mercadopago_order_total_amount',
+  'mercadopago_order_payment_method',
+  'mercadopago_payment_id',
+  'mercadopago_payment_status',
+  'mercadopago_status_detail',
+  'mercadopago_pix_qr_code',
+  'mercadopago_pix_qr_code_base64',
+  'mercadopago_pix_ticket_url',
+  'mercadopago_pix_date_of_expiration',
+  'mercadopago_pix_expiration_time',
+  'mercadopago_pix_idempotency_key',
+  'mercadopago_external_reference',
+] as const
+
+// Explicit Orders API status mapping (order status first, since it is the
+// aggregate; transaction status as fallback). Unknown values map to
+// 'unknown' — never silently to 'pending'.
+export function normalizePixStatus(input: {
+  orderStatus?: string
+  orderStatusDetail?: string
+  paymentStatus?: string
+  paymentStatusDetail?: string
+}): PixDisplayStatus {
+  const status = (input.orderStatus || input.paymentStatus || '').toLowerCase()
+
+  switch (status) {
+    case 'processed':
+    case 'approved':
+    case 'accredited':
+      return 'approved'
+    case 'action_required':
+      return 'pending'
+    case 'created':
+    case 'processing':
+    case 'in_process':
+    case 'in_review':
+      return 'processing'
+    case 'expired':
+      return 'expired'
+    case 'canceled':
+    case 'cancelled':
+      return 'canceled'
+    case 'failed':
+      return 'failed'
+    case 'rejected':
+      return 'rejected'
+    case 'refunded':
+      return 'refunded'
+    case 'charged_back':
+      return 'charged_back'
+    default:
+      return 'unknown'
+  }
+}
+
+export type PixPaymentDto = {
+  status: PixDisplayStatus
+  session_status: string
+  mercadopago_order_id?: string
+  order_status?: string
+  order_status_detail?: string
+  payment_status?: string
+  payment_status_detail?: string
+  qr_code?: string
+  qr_code_base64?: string
+  ticket_url?: string
+  expires_at?: string
+}
+
+function getStringField(data: PaymentData | null | undefined, key: string): string | undefined {
+  const value = data?.[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+// The only Pix surface the storefront reads: display fields plus the native
+// Mercado Pago statuses. Never the payer, identification, card data,
+// idempotency keys or anything else in session.data. A session Medusa has
+// already authorized (webhook or completeCart) is 'approved' regardless of
+// the last stored Mercado Pago status.
+export function toPixPaymentDto(session: {
+  status?: string | null
+  data?: PaymentData | null
+}): PixPaymentDto {
+  const data = session.data ?? undefined
+  const orderStatus = getStringField(data, 'mercadopago_order_status')
+  const orderStatusDetail = getStringField(data, 'mercadopago_order_status_detail')
+  const paymentStatus = getStringField(data, 'mercadopago_payment_status')
+  const paymentStatusDetail = getStringField(data, 'mercadopago_status_detail')
+  const sessionStatus = session.status ?? 'pending'
+
+  const status: PixDisplayStatus =
+    sessionStatus === 'authorized'
+      ? 'approved'
+      : normalizePixStatus({ orderStatus, orderStatusDetail, paymentStatus, paymentStatusDetail })
+
+  return {
+    status,
+    session_status: sessionStatus,
+    mercadopago_order_id: getStringField(data, 'mercadopago_order_id'),
+    order_status: orderStatus,
+    order_status_detail: orderStatusDetail,
+    payment_status: paymentStatus,
+    payment_status_detail: paymentStatusDetail,
+    qr_code: getStringField(data, 'mercadopago_pix_qr_code'),
+    qr_code_base64: getStringField(data, 'mercadopago_pix_qr_code_base64'),
+    ticket_url: getStringField(data, 'mercadopago_pix_ticket_url'),
+    expires_at:
+      getStringField(data, 'mercadopago_pix_date_of_expiration') ??
+      getStringField(data, 'mercadopago_pix_expiration_time'),
+  }
+}
+
+// True when the session data carries a Mercado Pago Pix Order. Card Orders
+// also store mercadopago_order_id, so the Pix marker (or Pix-only fields
+// written by older Pix sessions) is what distinguishes them.
+export function hasPixOrderData(data: PaymentData): boolean {
+  return (
+    typeof data.mercadopago_order_id === 'string' &&
+    data.mercadopago_order_id.length > 0 &&
+    (data.mercadopago_order_payment_method === 'pix' ||
+      typeof data.mercadopago_pix_qr_code === 'string' ||
+      typeof data.mercadopago_pix_ticket_url === 'string')
+  )
+}
+
+type PixOrderLike = { id?: string; status?: string; status_detail?: string; total_amount?: string }
+
+type PixOrderPaymentLike = {
+  id?: string
+  status?: string
+  status_detail?: string
+  date_of_expiration?: string
+  expiration_time?: string
+  payment_method?: { qr_code?: string; qr_code_base64?: string; ticket_url?: string }
+}
+
+// Builds the non-destructive data merge shared by Pix order creation,
+// preparation, re-authorization and the storefront status read: spreads
+// the existing session data first (never removing card_token/payer/
+// installments or anything else already there), then adds/overwrites only the Mercado Pago fields that are
+// actually present in this Order response. Never writes a key with an
+// undefined value. qr_code_base64 is persisted as-is even when it's an
+// empty string (sandbox behavior), never substituted with another value.
+// Expiration is persisted under the exact field name the API actually
+// returned (date_of_expiration and/or expiration_time), never invented
+// for the one that's absent.
+export function mergePixOrderData(
+  data: PaymentData,
+  order: PixOrderLike,
+  payment?: PixOrderPaymentLike
+): PaymentData {
+  const paymentMethod = payment?.payment_method
+
+  return {
+    ...data,
+    mercadopago_order_payment_method: 'pix',
+    ...(order.id !== undefined ? { mercadopago_order_id: order.id } : {}),
+    ...(order.total_amount !== undefined
+      ? { mercadopago_order_total_amount: order.total_amount }
+      : {}),
+    ...(order.status !== undefined ? { mercadopago_order_status: order.status } : {}),
+    ...(order.status_detail !== undefined
+      ? { mercadopago_order_status_detail: order.status_detail }
+      : {}),
+    ...(payment?.id !== undefined ? { mercadopago_payment_id: payment.id } : {}),
+    ...(payment?.status !== undefined ? { mercadopago_payment_status: payment.status } : {}),
+    ...(payment?.status_detail !== undefined
+      ? { mercadopago_status_detail: payment.status_detail }
+      : {}),
+    ...(paymentMethod?.qr_code !== undefined ? { mercadopago_pix_qr_code: paymentMethod.qr_code } : {}),
+    ...(paymentMethod?.qr_code_base64 !== undefined
+      ? { mercadopago_pix_qr_code_base64: paymentMethod.qr_code_base64 }
+      : {}),
+    ...(paymentMethod?.ticket_url !== undefined
+      ? { mercadopago_pix_ticket_url: paymentMethod.ticket_url }
+      : {}),
+    ...(payment?.date_of_expiration !== undefined
+      ? { mercadopago_pix_date_of_expiration: payment.date_of_expiration }
+      : {}),
+    ...(payment?.expiration_time !== undefined
+      ? { mercadopago_pix_expiration_time: payment.expiration_time }
+      : {}),
+  }
+}
+
 class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoPagoProviderOptions> {
   static identifier = 'mercadopago'
 
@@ -202,85 +420,178 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
     return { hasPixSignal, hasNonPixSignal }
   }
 
-  // Maps the one Pix-specific state the Orders API can return that has no
-  // equivalent in getStatusFromGateway(): an order awaiting the buyer's Pix
-  // transfer. Delegates to the existing, unmodified getStatusFromGateway()
-  // for every other case (including the final captured/authorized states),
-  // so card/debit behavior (which never calls this function) is untouched
-  // and the approved/rejected/etc. mapping isn't duplicated.
+  // Maps a Pix Order's native Orders API status to the Medusa Payment
+  // Session status authorizePayment must return. Card/debit never call this
+  // (they keep getStatusFromGateway()). Every Orders API status has an
+  // explicit mapping; an unrecognized one throws instead of silently
+  // becoming 'pending'.
   private resolvePixStatus(
     paymentStatus?: string,
     paymentStatusDetail?: string,
     orderStatus?: string,
     orderStatusDetail?: string
-  ): 'captured' | 'authorized' | 'pending' | 'canceled' | 'error' | 'requires_more' | 'pending_authorization' {
-    const normalizedPaymentStatus = paymentStatus?.toLowerCase() ?? ''
-    const normalizedPaymentDetail = paymentStatusDetail?.toLowerCase() ?? ''
-    const normalizedOrderStatus = orderStatus?.toLowerCase() ?? ''
-    const normalizedOrderDetail = orderStatusDetail?.toLowerCase() ?? ''
+  ): 'captured' | 'canceled' | 'error' | 'pending_authorization' {
+    const display = normalizePixStatus({
+      orderStatus,
+      orderStatusDetail,
+      paymentStatus,
+      paymentStatusDetail,
+    })
 
-    const isActionRequired =
-      normalizedPaymentStatus === 'action_required' || normalizedOrderStatus === 'action_required'
-    const isWaitingTransfer =
-      normalizedPaymentDetail === 'waiting_transfer' || normalizedOrderDetail === 'waiting_transfer'
-
-    if (isActionRequired && isWaitingTransfer) {
-      return 'pending_authorization'
+    switch (display) {
+      case 'approved':
+        return 'captured'
+      // Charge created and awaiting the buyer's transfer (action_required /
+      // waiting_transfer), or still being processed asynchronously: the
+      // outcome arrives later through the webhook.
+      case 'pending':
+      case 'processing':
+        return 'pending_authorization'
+      case 'expired':
+      case 'canceled':
+      case 'refunded':
+      case 'charged_back':
+        return 'canceled'
+      case 'failed':
+      case 'rejected':
+        return 'error'
+      default:
+        throw new MedusaError(
+          MedusaError.Types.UNEXPECTED_STATE,
+          `Mercado Pago: unrecognized Pix order status "${orderStatus ?? paymentStatus ?? ''}".`
+        )
     }
-
-    return this.getStatusFromGateway(paymentStatus, orderStatus)
   }
 
-  // Builds the non-destructive data merge shared by Pix order creation and
-  // Pix re-authorization: spreads the existing session data first (never
-  // removing card_token/payer/installments or anything else already
-  // there), then adds/overwrites only the Mercado Pago fields that are
-  // actually present in this Order response. Never writes a key with an
-  // undefined value. qr_code_base64 is persisted as-is even when it's an
-  // empty string (sandbox behavior), never substituted with another value.
-  // Expiration is persisted under the exact field name the API actually
-  // returned (date_of_expiration and/or expiration_time), never invented
-  // for the one that's absent.
+  private isSameAmount(orderAmount: unknown, sessionAmount: unknown): boolean {
+    // The Orders API always returns total_amount; when a response lacks it
+    // there is nothing to compare against, so it is not treated as a
+    // mismatch.
+    if (orderAmount === undefined || orderAmount === null || orderAmount === '') {
+      return true
+    }
+
+    return Number(orderAmount).toFixed(2) === Number(sessionAmount).toFixed(2)
+  }
+
+  // Idempotency key for creating a Pix Order. Derived from (never replacing)
+  // the session's existing key, so card orders keep using the base key
+  // unchanged and cannot collide with a Pix Order created earlier for the
+  // same session. The amount is part of it, and the generation changes on
+  // every replacement, so a regenerated Pix never gets back the expired
+  // Order Mercado Pago already associated with the previous key.
+  private getPixIdempotencyKey(data: PaymentData, amount: number, generation: number, context?: Record<string, unknown>): string {
+    const baseKey = this.getIdempotencyKey({ ...data, amount }, context)
+
+    return createHash('sha256')
+      .update(`${baseKey}:pix:${amount.toFixed(2)}:${generation}`)
+      .digest('hex')
+  }
+
+  private withoutPixOrder(data: PaymentData): PaymentData {
+    const next: PaymentData = { ...data }
+
+    for (const field of PIX_ORDER_FIELDS) {
+      delete next[field]
+    }
+
+    return next
+  }
+
+  private async fetchPixDisplayStatus(orderId: string): Promise<PixDisplayStatus> {
+    const order = await this.orderClient.get({ id: orderId })
+    const payment = order.transactions?.payments?.[0]
+
+    return normalizePixStatus({
+      orderStatus: order.status,
+      orderStatusDetail: order.status_detail,
+      paymentStatus: payment?.status,
+      paymentStatusDetail: payment?.status_detail,
+    })
+  }
+
+  // Makes sure the Pix Order attached to this session can no longer be paid.
+  // Pending charges are cancelled through the Orders API; charges already in
+  // a terminal state need nothing. A paid charge is never silently discarded
+  // (that would leave a captured Pix without any session): the caller gets
+  // an error instead.
+  private async invalidatePixOrder(data: PaymentData, knownDisplay?: PixDisplayStatus): Promise<void> {
+    const orderId = data.mercadopago_order_id as string
+    const display = knownDisplay ?? (await this.fetchPixDisplayStatus(orderId))
+
+    if (display === 'approved') {
+      throw new MedusaError(
+        MedusaError.Types.NOT_ALLOWED,
+        'Mercado Pago: this Pix charge has already been paid and cannot be discarded.'
+      )
+    }
+
+    if (display !== 'pending' && display !== 'processing') {
+      return
+    }
+
+    const pixKey =
+      typeof data.mercadopago_pix_idempotency_key === 'string'
+        ? data.mercadopago_pix_idempotency_key
+        : orderId
+
+    await this.orderClient.cancel({
+      id: orderId,
+      requestOptions: {
+        idempotencyKey: createHash('sha256').update(`${pixKey}:cancel`).digest('hex'),
+      },
+    })
+  }
+
+  // Review-time preparation of the Pix charge. Reuses the session's Pix
+  // Order while it is still payable for the same amount; otherwise
+  // invalidates it and creates a new one. A paid charge is returned as-is
+  // and never replaced. Always returns session status 'pending' for a
+  // payable charge: the session is only authorized by authorizePayment
+  // (completeCart) or by the webhook, never by this preparation.
+  private async preparePixOrder(data: PaymentData, input: any, forceNew: boolean): Promise<any> {
+    if (hasPixOrderData(data)) {
+      const orderId = data.mercadopago_order_id as string
+      const order = await this.orderClient.get({ id: orderId })
+      const payment = order.transactions?.payments?.[0]
+      const refreshed = this.buildPixOrderData(data, order, payment)
+      const display = normalizePixStatus({
+        orderStatus: order.status,
+        orderStatusDetail: order.status_detail,
+        paymentStatus: payment?.status,
+        paymentStatusDetail: payment?.status_detail,
+      })
+
+      if (display === 'approved') {
+        return { data: refreshed }
+      }
+
+      const reusable =
+        !forceNew &&
+        (display === 'pending' || display === 'processing') &&
+        this.isSameAmount(order.total_amount, data.amount)
+
+      if (reusable) {
+        return { status: 'pending', data: refreshed }
+      }
+
+      await this.invalidatePixOrder(refreshed, display)
+      const created = await this.createPixOrder(this.withoutPixOrder(refreshed), input)
+
+      return { status: 'pending', data: created.data }
+    }
+
+    const created = await this.createPixOrder(data, input)
+
+    return { status: 'pending', data: created.data }
+  }
+
   private buildPixOrderData(
     data: PaymentData,
-    order: { id?: string; status?: string; status_detail?: string },
-    payment?: {
-      id?: string
-      status?: string
-      status_detail?: string
-      date_of_expiration?: string
-      expiration_time?: string
-      payment_method?: { qr_code?: string; qr_code_base64?: string; ticket_url?: string }
-    }
+    order: PixOrderLike,
+    payment?: PixOrderPaymentLike
   ): PaymentData {
-    const paymentMethod = payment?.payment_method
-
-    return {
-      ...data,
-      ...(order.id !== undefined ? { mercadopago_order_id: order.id } : {}),
-      ...(order.status !== undefined ? { mercadopago_order_status: order.status } : {}),
-      ...(order.status_detail !== undefined
-        ? { mercadopago_order_status_detail: order.status_detail }
-        : {}),
-      ...(payment?.id !== undefined ? { mercadopago_payment_id: payment.id } : {}),
-      ...(payment?.status !== undefined ? { mercadopago_payment_status: payment.status } : {}),
-      ...(payment?.status_detail !== undefined
-        ? { mercadopago_status_detail: payment.status_detail }
-        : {}),
-      ...(paymentMethod?.qr_code !== undefined ? { mercadopago_pix_qr_code: paymentMethod.qr_code } : {}),
-      ...(paymentMethod?.qr_code_base64 !== undefined
-        ? { mercadopago_pix_qr_code_base64: paymentMethod.qr_code_base64 }
-        : {}),
-      ...(paymentMethod?.ticket_url !== undefined
-        ? { mercadopago_pix_ticket_url: paymentMethod.ticket_url }
-        : {}),
-      ...(payment?.date_of_expiration !== undefined
-        ? { mercadopago_pix_date_of_expiration: payment.date_of_expiration }
-        : {}),
-      ...(payment?.expiration_time !== undefined
-        ? { mercadopago_pix_expiration_time: payment.expiration_time }
-        : {}),
-    }
+    return mergePixOrderData(data, order, payment)
   }
 
   // First Pix authorization: no mercadopago_order_id in session data yet.
@@ -296,6 +607,13 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
     const cartId = typeof data.cart_id === 'string' && data.cart_id ? data.cart_id : undefined
     const payer = data.payer && typeof data.payer === 'object' ? data.payer : undefined
     const idempotencyKey = this.getIdempotencyKey({ ...data, amount }, input?.context)
+    // Each Pix Order created for this session gets the next generation, so
+    // a replacement never reuses the key of the Order it replaces. A retry
+    // after a failed create reuses the same generation (it was never
+    // persisted), and therefore the same key.
+    const generation =
+      typeof data.mercadopago_pix_generation === 'number' ? data.mercadopago_pix_generation + 1 : 0
+    const pixIdempotencyKey = this.getPixIdempotencyKey(data, amount, generation, input?.context)
 
     if (!payer || typeof payer !== 'object') {
       throw new MedusaError(
@@ -333,7 +651,7 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
         },
       },
       requestOptions: {
-        idempotencyKey,
+        idempotencyKey: pixIdempotencyKey,
       },
     })
 
@@ -366,6 +684,8 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
         ...this.buildPixOrderData(data, order, payment),
         mercadopago_external_reference: cartId,
         mercadopago_idempotency_key: idempotencyKey,
+        mercadopago_pix_idempotency_key: pixIdempotencyKey,
+        mercadopago_pix_generation: generation,
       },
     }
   }
@@ -383,6 +703,16 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
       throw new MedusaError(
         MedusaError.Types.NOT_FOUND,
         'Mercado Pago: payment not found in the order.'
+      )
+    }
+
+    // The session amount is fixed for its lifetime (Medusa deletes and
+    // recreates sessions when the cart total changes), so a Pix Order for a
+    // different amount can never be the charge that authorizes it.
+    if (data.amount !== undefined && !this.isSameAmount(order.total_amount, data.amount)) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        'Mercado Pago: the Pix charge amount does not match the payment session amount.'
       )
     }
 
@@ -439,26 +769,72 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
     }
   }
 
+  // `mercadopago_pix_action` is a transient instruction set only by the
+  // POST /store/mercadopago/payment-sessions/:id/pix route (the storefront's
+  // session update route drops it via its allowlist). It is never persisted.
+  //
+  // - No action, no Pix Order attached: same behavior as before (card data
+  //   and Pix method selection are just stored).
+  // - No action, Pix Order attached, session still Pix: kept as-is.
+  // - No action, Pix Order attached, session switched to another method:
+  //   the Pix Order is invalidated and detached from the session.
+  // - 'prepare': create the Pix Order, or reuse the attached one while it is
+  //   still payable for the same amount.
+  // - 'regenerate': replace the attached Pix Order unless it has been paid.
   async updatePayment(input: any): Promise<any> {
-    const data = this.getDataObject(input)
+    const { mercadopago_pix_action: pixAction, ...data } = this.getDataObject(input)
     const amount = this.getAmount(input?.amount ?? data.amount ?? 0, 'payment amount')
     const currency = (input?.currency_code ?? data.currency_code ?? 'BRL').toString().toUpperCase()
     const idempotencyKey = this.getIdempotencyKey({ ...data, amount, currency_code: currency }, input?.context)
 
-    return {
-      data: {
-        ...data,
-        amount: amount.toFixed(2),
-        currency_code: currency,
-        mercadopago_idempotency_key: idempotencyKey,
-      },
+    const nextData: PaymentData = {
+      ...data,
+      amount: amount.toFixed(2),
+      currency_code: currency,
+      mercadopago_idempotency_key: idempotencyKey,
     }
+
+    if (pixAction === undefined) {
+      if (!hasPixOrderData(nextData) || this.isPixSession(nextData)) {
+        return { data: nextData }
+      }
+
+      await this.invalidatePixOrder(nextData)
+
+      return { data: this.withoutPixOrder(nextData) }
+    }
+
+    if (pixAction !== 'prepare' && pixAction !== 'regenerate') {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        'Mercado Pago: unsupported Pix action.'
+      )
+    }
+
+    if (!this.isPixSession(nextData)) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        'Mercado Pago: the payment session is not a Pix payment.'
+      )
+    }
+
+    return this.preparePixOrder(nextData, input, pixAction === 'regenerate')
   }
 
+  // Called by the Payment Module when a session is deleted (payment method
+  // or provider switched, or the cart total changed and Medusa recreated
+  // the payment sessions). A Pix Order attached to the session must not
+  // remain payable without it.
   async deletePayment(input: any): Promise<any> {
-    return {
-      data: this.getDataObject(input),
+    const data = this.getDataObject(input)
+
+    if (!hasPixOrderData(data)) {
+      return { data }
     }
+
+    await this.invalidatePixOrder(data)
+
+    return { data: this.withoutPixOrder(data) }
   }
 
   async authorizePayment(input: any): Promise<any> {

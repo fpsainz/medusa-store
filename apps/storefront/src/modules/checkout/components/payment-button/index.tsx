@@ -12,11 +12,16 @@ import ErrorMessage from "../error-message"
 type PaymentButtonProps = {
   cart: HttpTypes.StoreCart
   "data-testid": string
+  // Mercado Pago only: true while the Review's Pix charge cannot be paid yet
+  // (still processing, expired, failed...). Placing the order then would
+  // create an order without a payable Pix charge.
+  mercadoPagoBlocked?: boolean
 }
 
 const PaymentButton: React.FC<PaymentButtonProps> = ({
   cart,
   "data-testid": dataTestId,
+  mercadoPagoBlocked = false,
 }) => {
   const notReady =
     !cart ||
@@ -39,7 +44,7 @@ const PaymentButton: React.FC<PaymentButtonProps> = ({
     case isMercadoPago(paymentSession?.provider_id):
       return (
         <MercadoPagoPaymentButton
-          notReady={notReady}
+          notReady={notReady || mercadoPagoBlocked}
           cart={cart}
           data-testid={dataTestId}
         />
@@ -164,6 +169,12 @@ const StripePaymentButton = ({
   )
 }
 
+// Shared by both submethods of the Mercado Pago provider (card and Pix —
+// they're both `pp_mercadopago`, distinguished only by the session's own
+// stored payment_method_id, not by a different provider_id). This is the
+// single place completeCart is triggered for both: the Payment Brick's
+// onSubmit only saves the payment data to the session, and the Pix Order
+// (and its QR) is created by the provider during completeCart.
 const MercadoPagoPaymentButton = ({
   cart,
   notReady,

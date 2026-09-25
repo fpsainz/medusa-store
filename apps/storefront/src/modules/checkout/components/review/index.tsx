@@ -5,6 +5,9 @@ import { Heading, Text, clx } from "@modules/common/components/ui"
 import PaymentButton from "../payment-button"
 import { useSearchParams } from "next/navigation"
 import { HttpTypes } from "@medusajs/types"
+import { useState } from "react"
+import { isMercadoPago } from "@lib/constants"
+import PixPaymentPanel from "@modules/order/components/payment-details/pix-payment-panel"
 
 const Review = ({ cart }: { cart: HttpTypes.StoreCart }) => {
   const searchParams = useSearchParams()
@@ -19,6 +22,20 @@ const Review = ({ cart }: { cart: HttpTypes.StoreCart }) => {
     cart.shipping_address &&
     (cart.shipping_methods?.length ?? 0) > 0 &&
     (cart.payment_collection || paidByGiftcard)
+
+  // Mercado Pago Pix only: the Payment Brick's onSubmit stored
+  // payment_method_id "pix" on the session. Card sessions (same provider)
+  // and every other provider never render the Pix panel.
+  const pixPaymentSession = cart.payment_collection?.payment_sessions?.find(
+    (session) =>
+      isMercadoPago(session.provider_id) &&
+      session.data?.payment_method_id === "pix"
+  )
+
+  // A Pix order is only placed once its charge can actually be paid (or is
+  // already paid); otherwise the order would have no payable Pix charge.
+  const [pixPlaceOrderAllowed, setPixPlaceOrderAllowed] = useState(false)
+  const mercadoPagoBlocked = Boolean(pixPaymentSession) && !pixPlaceOrderAllowed
 
   return (
     <div className="bg-white">
@@ -37,6 +54,13 @@ const Review = ({ cart }: { cart: HttpTypes.StoreCart }) => {
       </div>
       {isOpen && previousStepsCompleted && (
         <>
+          {pixPaymentSession && (
+            <PixPaymentPanel
+              cartId={cart.id}
+              paymentSessionId={pixPaymentSession.id}
+              onPlaceOrderAllowedChange={setPixPlaceOrderAllowed}
+            />
+          )}
           <div className="flex items-start gap-x-1 w-full mb-6">
             <div className="w-full">
               <Text className="txt-medium-plus text-ui-fg-base mb-1">
@@ -47,7 +71,11 @@ const Review = ({ cart }: { cart: HttpTypes.StoreCart }) => {
               </Text>
             </div>
           </div>
-          <PaymentButton cart={cart} data-testid="submit-order-button" />
+          <PaymentButton
+            cart={cart}
+            data-testid="submit-order-button"
+            mercadoPagoBlocked={mercadoPagoBlocked}
+          />
         </>
       )}
     </div>

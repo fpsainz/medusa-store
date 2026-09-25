@@ -263,13 +263,101 @@ export async function updateMercadoPagoPaymentSession(
     ...(await getAuthHeaders()),
   }
 
+  const payer = data.payer as { email?: unknown } | undefined
+  console.log("[MP SERVER DEBUG] BEFORE MEDUSA FETCH", {
+    paymentSessionId,
+    data: {
+      ...data,
+      card_token: data.card_token ? "[MASKED]" : data.card_token,
+      payer: payer ? { ...payer, email: payer.email ? "[MASKED]" : payer.email } : payer,
+    },
+  })
+
   return sdk.client
     .fetch(`/store/mercadopago/payment-sessions/${paymentSessionId}`, {
       method: "POST",
       body: data,
       headers,
     })
-    .then((resp) => resp)
+    .then((resp) => {
+      console.log("[MP SERVER DEBUG] MEDUSA FETCH RESPONSE", {
+        paymentSessionId,
+        response: resp,
+      })
+      return resp
+    })
+    .catch((error) => {
+      console.error("[MP SERVER DEBUG] MEDUSA FETCH ERROR", {
+        paymentSessionId,
+        error,
+      })
+      return medusaError(error)
+    })
+}
+
+// State of the cart's Mercado Pago Pix charge as returned by the backend.
+// `status` is a presentation status derived from Mercado Pago's native
+// statuses (also returned, unchanged); it is not a Medusa Order status.
+export type PixChargeStatus =
+  | "processing"
+  | "pending"
+  | "approved"
+  | "expired"
+  | "canceled"
+  | "failed"
+  | "rejected"
+  | "refunded"
+  | "charged_back"
+  | "unknown"
+
+export type PixCharge = {
+  status: PixChargeStatus
+  session_status: string
+  mercadopago_order_id?: string
+  order_status?: string
+  order_status_detail?: string
+  payment_status?: string
+  payment_status_detail?: string
+  qr_code?: string
+  qr_code_base64?: string
+  ticket_url?: string
+  expires_at?: string
+}
+
+// Asks the backend to create (or reuse) the Mercado Pago Pix charge of the
+// cart's payment session. Idempotent: repeated calls return the same charge
+// while it is still payable. `regenerate` replaces an expired/invalid one.
+export async function preparePixPayment(
+  paymentSessionId: string,
+  cartId: string,
+  regenerate = false
+): Promise<PixCharge> {
+  const headers = {
+    ...(await getAuthHeaders()),
+  }
+
+  return sdk.client
+    .fetch<PixCharge>(`/store/mercadopago/payment-sessions/${paymentSessionId}/pix`, {
+      method: "POST",
+      body: { cart_id: cartId, regenerate },
+      headers,
+      cache: "no-store",
+    })
+    .catch(medusaError)
+}
+
+// Read-only: current state of the cart's Pix charge. Never creates one.
+export async function retrieveCartPixPayment(cartId: string): Promise<PixCharge> {
+  const headers = {
+    ...(await getAuthHeaders()),
+  }
+
+  return sdk.client
+    .fetch<PixCharge>(`/store/mercadopago/carts/${cartId}/pix`, {
+      method: "GET",
+      headers,
+      cache: "no-store",
+    })
     .catch(medusaError)
 }
 
@@ -416,18 +504,29 @@ export async function placeOrder(cartId?: string) {
     throw new Error("No existing cart found when placing an order")
   }
 
+  console.log("[MP FLOW] placeOrder START", { cartId: id })
+
   const headers = {
     ...(await getAuthHeaders()),
   }
 
+  console.log("[MP FLOW] completeCart START", { cartId: id })
+
   const cartRes = await sdk.store.cart
     .complete(id, {}, headers)
     .then(async (cartRes) => {
+      console.log("[MP FLOW] completeCart RESPONSE", {
+        type: cartRes?.type,
+        orderId: cartRes?.type === "order" ? cartRes.order.id : undefined,
+      })
       const cartCacheTag = await getCacheTag("carts")
       revalidateTag(cartCacheTag)
       return cartRes
     })
-    .catch(medusaError)
+    .catch((err) => {
+      console.error("[MP FLOW] completeCart ERROR", { message: err?.message })
+      return medusaError(err)
+    })
 
   if (cartRes?.type === "order") {
     const countryCode =
@@ -437,6 +536,10 @@ export async function placeOrder(cartId?: string) {
     revalidateTag(orderCacheTag)
 
     removeCartId()
+    console.log("[MP FLOW] REDIRECT CONFIRMED", {
+      orderId: cartRes.order.id,
+      countryCode,
+    })
     redirect(`/${countryCode}/order/${cartRes?.order.id}/confirmed`)
   }
 
