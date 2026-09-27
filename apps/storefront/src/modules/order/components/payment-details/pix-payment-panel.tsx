@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Button, Text, clx } from "@modules/common/components/ui"
+import { Button, Text } from "@modules/common/components/ui"
 import Modal from "@modules/common/components/modal"
 import ErrorMessage from "@modules/checkout/components/error-message"
 import {
@@ -11,6 +11,14 @@ import {
   type PixCharge,
   type PixChargeStatus,
 } from "@lib/data/cart"
+import PixChargeDetails, {
+  PIX_MAX_POLLS,
+  PIX_POLL_INTERVAL_MS,
+  PIX_STATUS_LABELS,
+  PIX_TERMINAL_STATUSES,
+  formatPixExpiration,
+  hasPayablePixData,
+} from "./pix-charge-details"
 
 type PixPaymentPanelProps = {
   cartId: string
@@ -20,64 +28,13 @@ type PixPaymentPanelProps = {
   onPlaceOrderAllowedChange?: (allowed: boolean) => void
 }
 
-// Complementary UI refresh only: the webhook is what updates Medusa. Polling
-// never creates a charge and never changes any status by itself — it just
-// re-reads GET /store/mercadopago/carts/:id/pix. It stops at a terminal
-// status, or after a bounded number of polls (then the buyer can refresh
-// manually); it is not an expiration timer.
-const POLL_INTERVAL_MS = 5000
-const MAX_POLLS = 180
-
-const TERMINAL_STATUSES: PixChargeStatus[] = [
-  "approved",
-  "expired",
-  "canceled",
-  "failed",
-  "rejected",
-  "refunded",
-  "charged_back",
-]
+// Polling never creates a charge and never changes any status by itself —
+// it just re-reads GET /store/mercadopago/carts/:id/pix (interval, budget and
+// terminal statuses are shared with the order page, see pix-charge-details).
 
 // States in which the charge can no longer be paid and a new one may be
 // created for the same session. A paid charge is never regenerated.
 const REGENERABLE_STATUSES: PixChargeStatus[] = ["expired", "canceled", "failed", "rejected"]
-
-const STATUS_LABELS: Record<PixChargeStatus, string> = {
-  processing: "Preparing your Pix charge…",
-  pending: "Awaiting payment",
-  approved: "Payment approved",
-  expired: "Pix expired",
-  canceled: "Pix canceled",
-  failed: "Payment failed",
-  rejected: "Payment rejected",
-  refunded: "Payment refunded",
-  charged_back: "Payment charged back",
-  unknown: "Status unavailable",
-}
-
-// Visual classes copied from Button's "secondary" variant (ui/index.tsx) so
-// the ticket_url link matches the starter's design system without nesting
-// <Button> inside <a> (invalid: both render interactive/focusable elements).
-const secondaryLinkClasses = clx(
-  "inline-flex gap-2 items-center justify-center rounded-md font-medium transition-colors",
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
-  "bg-white text-black border border-gray-200 hover:bg-gray-50",
-  "h-10 px-4",
-  "w-full md:w-fit"
-)
-
-function hasPayableData(pixCharge: PixCharge): boolean {
-  return Boolean(pixCharge.qr_code_base64 || pixCharge.qr_code || pixCharge.ticket_url)
-}
-
-function formatExpiration(expiresAt?: string): string | undefined {
-  if (!expiresAt) {
-    return undefined
-  }
-
-  const date = new Date(expiresAt)
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : expiresAt
-}
 
 // The Pix charge of the checkout Review. Asks the backend to prepare (create
 // or reuse) the Mercado Pago charge once per payment session, shows the real
@@ -93,7 +50,6 @@ const PixPaymentPanel = ({
   const [error, setError] = useState<string | null>(null)
   const [isPreparing, setIsPreparing] = useState(false)
   const [isQrModalOpen, setIsQrModalOpen] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [pollCount, setPollCount] = useState(0)
   // The cart was completed (webhook or another tab) while this Review is
   // open: the charge is no longer shown and "Place order" leads to the order.
@@ -146,8 +102,8 @@ const PixPaymentPanel = ({
   }, [])
 
   const status = pixCharge?.status
-  const isTerminal = cartCompleted || (status ? TERMINAL_STATUSES.includes(status) : false)
-  const pollBudgetExhausted = pollCount >= MAX_POLLS
+  const isTerminal = cartCompleted || (status ? PIX_TERMINAL_STATUSES.includes(status) : false)
+  const pollBudgetExhausted = pollCount >= PIX_MAX_POLLS
 
   useEffect(() => {
     if (!pixCharge || isTerminal || pollBudgetExhausted) {
@@ -165,7 +121,7 @@ const PixPaymentPanel = ({
 
       applyPoll(next)
       setPollCount((count) => count + 1)
-    }, POLL_INTERVAL_MS)
+    }, PIX_POLL_INTERVAL_MS)
 
     return () => {
       cancelled = true
@@ -180,7 +136,7 @@ const PixPaymentPanel = ({
     if (
       !cartCompleted &&
       pixCharge?.status === "pending" &&
-      hasPayableData(pixCharge) &&
+      hasPayablePixData(pixCharge) &&
       pixCharge.charge_ref &&
       autoOpenedChargeRef.current !== pixCharge.charge_ref
     ) {
@@ -194,7 +150,7 @@ const PixPaymentPanel = ({
   const placeOrderAllowed =
     cartCompleted ||
     pixCharge?.status === "approved" ||
-    (pixCharge?.status === "pending" && hasPayableData(pixCharge))
+    (pixCharge?.status === "pending" && hasPayablePixData(pixCharge))
 
   useEffect(() => {
     onPlaceOrderAllowedChange?.(placeOrderAllowed)
@@ -205,22 +161,9 @@ const PixPaymentPanel = ({
     setPollCount(0)
   }
 
-  const handleCopy = async () => {
-    if (!pixCharge?.qr_code) return
-    try {
-      await navigator.clipboard.writeText(pixCharge.qr_code)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2500)
-    } catch {
-      // Clipboard API unavailable (e.g. insecure context) — the copy-paste
-      // code and ticket_url link remain visible/manually selectable as
-      // fallback, so payment is still completable without this button.
-    }
-  }
-
-  const expirationLabel = formatExpiration(pixCharge?.expires_at)
+  const expirationLabel = formatPixExpiration(pixCharge?.expires_at)
   const isPayable =
-    !cartCompleted && status === "pending" && pixCharge !== null && hasPayableData(pixCharge)
+    !cartCompleted && status === "pending" && pixCharge !== null && hasPayablePixData(pixCharge)
   const canRegenerate = !cartCompleted && (status ? REGENERABLE_STATUSES.includes(status) : false)
 
   const statusBlock = cartCompleted ? (
@@ -235,7 +178,7 @@ const PixPaymentPanel = ({
   ) : pixCharge && (
     <div className="flex flex-col gap-1">
       <Text className="txt-medium-plus text-ui-fg-base" data-testid="pix-payment-status">
-        {STATUS_LABELS[pixCharge.status]}
+        {PIX_STATUS_LABELS[pixCharge.status]}
       </Text>
       {pixCharge.status === "approved" && (
         <Text className="txt-small text-ui-fg-subtle">
@@ -318,66 +261,7 @@ const PixPaymentPanel = ({
             <div className="flex flex-col gap-4 w-full py-4 overflow-y-auto">
               {statusBlock}
 
-              {/* QR is intentionally not rendered inline (unreliable
-                  rendering reported in real browsers). It only exists inside
-                  this modal — no duplicate <img>, no hidden preload image. */}
-              {isPayable && pixCharge.qr_code_base64 && (
-                <div className="flex justify-center">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- small inline base64 QR, no remote-optimization benefit */}
-                  <img
-                    src={`data:image/png;base64,${pixCharge.qr_code_base64}`}
-                    alt="Pix QR code — scan with your bank's app to pay"
-                    width={288}
-                    height={288}
-                    className="w-64 h-64 md:w-72 md:h-72"
-                  />
-                </div>
-              )}
-
-              {isPayable && pixCharge.qr_code && (
-                <div className="flex flex-col gap-2">
-                  <Text className="txt-small text-ui-fg-subtle">
-                    Pix copy-and-paste code
-                  </Text>
-                  <div className="flex gap-2 items-start">
-                    <Text
-                      className="txt-small text-ui-fg-base break-all bg-white border rounded-rounded p-2 flex-1"
-                      data-testid="pix-copy-paste-code"
-                    >
-                      {pixCharge.qr_code}
-                    </Text>
-                    <Button
-                      variant="secondary"
-                      onClick={handleCopy}
-                      data-testid="pix-copy-button"
-                      aria-live="polite"
-                    >
-                      {copied ? "Copied!" : "Copy"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {isPayable && pixCharge.ticket_url && (
-                <a
-                  href={pixCharge.ticket_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={secondaryLinkClasses}
-                  data-testid="pix-ticket-url-link"
-                >
-                  Open Pix payment
-                </a>
-              )}
-
-              {isPayable && expirationLabel && (
-                <Text
-                  className="txt-small text-ui-fg-subtle"
-                  data-testid="pix-expiration"
-                >
-                  Expires at {expirationLabel}
-                </Text>
-              )}
+              {isPayable && <PixChargeDetails pixCharge={pixCharge} />}
 
               {regenerateButton}
             </div>

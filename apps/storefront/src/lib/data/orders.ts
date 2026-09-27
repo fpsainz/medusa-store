@@ -5,6 +5,8 @@ import medusaError from "@lib/util/medusa-error"
 import { FetchError } from "@medusajs/js-sdk"
 import { getAuthHeaders, getCacheOptions } from "./cookies"
 import { HttpTypes } from "@medusajs/types"
+import type { PixCharge } from "@lib/util/pix-client"
+import { readPixPaymentAccess } from "./payment-access"
 
 export const retrieveOrder = async (id: string) => {
   const headers = {
@@ -66,6 +68,18 @@ export const retrievePixPayment = async (
 
       return medusaError(err)
     })
+}
+
+// Pix of an order, read with the Pix payment capability of this browser
+// (HttpOnly cookie, ADR-007). The order id is only compared with the order
+// the capability belongs to: it is never sent to the backend and grants
+// nothing. Null when this browser holds no valid capability for that order.
+export const retrieveOrderPixPayment = async (
+  orderId: string
+): Promise<PixCharge | null> => {
+  const view = await readPixPaymentAccess()
+
+  return view && view.orderId !== null && view.orderId === orderId ? view.charge : null
 }
 
 export const listOrders = async (

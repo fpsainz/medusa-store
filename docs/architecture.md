@@ -54,6 +54,8 @@ Baseado no starter Next.js do Medusa. Partes específicas do Mercado Pago:
 | `src/modules/checkout/components/review` | Mostra o `PixPaymentPanel` quando a session tem `payment_method_id === "pix"` e bloqueia o botão até a cobrança estar pagável. |
 | `src/modules/checkout/components/payment-button` | `MercadoPagoPaymentButton`: único ponto que chama `placeOrder` para cartão e Pix. |
 | `src/modules/order/components/payment-details/pix-payment-panel.tsx` | Painel Pix da Review (QR, copia-e-cola, ticket, polling de status). |
+| `src/modules/order/components/payment-details/pix-charge-details.tsx` | Apresentação compartilhada do Pix (QR, copia e cola, ticket, prazo) e constantes de polling/status, usada pela Review e pela confirmação. |
+| `src/modules/order/components/payment-details/order-pix-payment.tsx` | Pix da página de confirmação: status e artefatos pagáveis lidos com a capability, polling por Server Action (`retrieveOrderPixPayment`). |
 
 ## Fronteiras
 

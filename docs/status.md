@@ -182,6 +182,7 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 - ✅ Emissão da capability no prepare (workflow, header de resposta) e revogação na troca de Pix para outro método. Testes unitários.
 - ✅ `GET /store/mercadopago/payment-access/pix`: leitura autorizada pela capability, DTO por estado e deadline, falha genérica. Testes unitários; ⚠ consulta reversa collection → order (`order.id`) ainda não executada contra o banco.
 - ✅ Storefront: capability do prepare gravada em cookie HttpOnly; Server Action devolve só o DTO permitido; leitura server-only por `fetch` nativo. Teste da fronteira (`node --test`); cookie e Server Action sem teste automatizado.
+- ✅ Confirmação do pedido usa a capability (comparação com o `order_id` da URL, polling por Server Action, apresentação do Pix compartilhada com a Review). `tsc`, lint e `next build`; sem teste automatizado de componente. `orders/:id/pix` ficou sem consumidor.
 - ⚠ **Migration `Migration20260927120000` não aplicada**: exige autorização explícita. Até lá, qualquer uso do módulo falha em execução.
 
 ## Dívida técnica

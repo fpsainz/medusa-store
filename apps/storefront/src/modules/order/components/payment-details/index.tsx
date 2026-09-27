@@ -1,10 +1,11 @@
 import { Container, Heading, Text } from "@modules/common/components/ui"
 
 import { isStripeLike, paymentInfoMap } from "@lib/constants"
-import { retrievePixPayment } from "@lib/data/orders"
+import { retrieveOrderPixPayment } from "@lib/data/orders"
 import Divider from "@modules/common/components/divider"
 import { convertToLocale } from "@lib/util/money"
 import { HttpTypes } from "@medusajs/types"
+import OrderPixPayment from "./order-pix-payment"
 
 type PaymentDetailsProps = {
   order: HttpTypes.StoreOrder
@@ -15,19 +16,18 @@ const PaymentDetails = async ({ order }: PaymentDetailsProps) => {
 
   // A Pix payment still awaiting the buyer's transfer has no Payment record
   // yet (Medusa only creates one once the provider confirms it, via the
-  // webhook), so `payment` above is undefined in that window. Its status
-  // comes from a dedicated, allowlisted endpoint instead of the raw payment
-  // session — null for any order that isn't a Mercado Pago payment.
+  // webhook), so `payment` above is undefined in that window. Its state is
+  // read with this browser's Pix payment capability (HttpOnly cookie, see
+  // ADR-007), never with the order id: the id in the URL is only compared
+  // with the capability's order. Another browser, or this one after the
+  // capability expired, gets null and sees no Pix details.
   //
-  // This page only reports the outcome. The Pix charge is prepared and
-  // shown (QR modal, polling) on the checkout Review, before "Place order";
-  // nothing here creates, prepares or polls it, and no modal opens here.
-  const pixPayment = await retrievePixPayment(order.id)
-  // The endpoint only answers for a Mercado Pago Pix session (404 → null).
+  // Nothing here creates or prepares a charge; OrderPixPayment only follows
+  // the existing one (polling through a Server Action).
+  const pixPayment = await retrieveOrderPixPayment(order.id)
   const isPixOrder = pixPayment !== null
-  // The payment session only becomes "authorized" once Medusa has recorded
-  // the Pix as paid (webhook or completeCart); until then it is awaiting.
-  const isAwaitingPix = isPixOrder && pixPayment?.status !== "authorized"
+  const isAwaitingPix =
+    isPixOrder && (pixPayment.status === "pending" || pixPayment.status === "processing")
 
   // Pending Pix has no Payment record yet — the summary falls back to the
   // Mercado Pago provider id and the order's total, without creating one.
@@ -75,35 +75,22 @@ const PaymentDetails = async ({ order }: PaymentDetailsProps) => {
                         })} paid at ${new Date(
                           payment.created_at ?? ""
                         ).toLocaleString()}`
-                    : `${convertToLocale({
+                    : isAwaitingPix
+                    ? `${convertToLocale({
                         amount: order.total,
                         currency_code: order.currency_code,
-                      })} — awaiting Pix payment`}
+                      })} — awaiting Pix payment`
+                    : convertToLocale({
+                        amount: order.total,
+                        currency_code: order.currency_code,
+                      })}
                 </Text>
               </div>
             </div>
           </div>
         )}
 
-        {isAwaitingPix && pixPayment?.ticket_url && (
-          <div
-            className="flex flex-col gap-2 mt-4"
-            data-testid="pix-order-pending"
-          >
-            <Text className="txt-small text-ui-fg-subtle">
-              Your Pix payment has not been confirmed yet.
-            </Text>
-            <a
-              href={pixPayment.ticket_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="txt-small text-ui-fg-interactive hover:text-ui-fg-interactive-hover"
-              data-testid="pix-order-ticket-url-link"
-            >
-              Open Pix payment
-            </a>
-          </div>
-        )}
+        {pixPayment && <OrderPixPayment orderId={order.id} initialCharge={pixPayment} />}
       </div>
 
       <Divider className="mt-8" />
