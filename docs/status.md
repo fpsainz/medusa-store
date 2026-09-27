@@ -179,6 +179,7 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 
 - ✅ Pix com `expiration_time: "PT1H"` e deadline conservadora (`780b740`). Testes unitários; ⚠ não observado no sandbox.
 - ✅ Módulo `paymentAccess` (token opaco, só hash, validação, limite de 3 por session, revogação). Testes unitários.
+- ✅ Emissão da capability no prepare (workflow, header de resposta) e revogação na troca de Pix para outro método. Testes unitários.
 - ⚠ **Migration `Migration20260927120000` não aplicada**: exige autorização explícita. Até lá, qualquer uso do módulo falha em execução.
 
 ## Dívida técnica

@@ -2,6 +2,7 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, MedusaError, Modules } from "@medusajs/framework/utils"
 
 import { toPixPaymentDto } from "../../../../../../modules/mercadopago/service"
+import { attachPixPaymentAccess } from "../../../../../utils/pix-payment-access"
 
 // Same identity as the other Mercado Pago routes (see the webhook route's
 // own comment): the registered provider token is pp_mercadopago.
@@ -19,6 +20,9 @@ type CartWithPaymentCollection = {
 // (service.ts updatePayment) through the Payment Module — this route never
 // talks to Mercado Pago, never authorizes the session and never completes
 // the cart. Calling it again for the same session is idempotent.
+//
+// Each call also issues a read-only Pix payment capability (ADR-007), sent in
+// response headers for the storefront server only; the body never carries it.
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const paymentModuleService = req.scope.resolve(Modules.PAYMENT)
   const paymentSessionId = req.params.id
@@ -86,6 +90,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // Already authorized by Medusa (webhook arrived before "Place order"):
   // nothing to prepare, and a paid charge must never be replaced.
   if (paymentSession.status === "authorized") {
+    await attachPixPaymentAccess(req, res, { cart_id: cartId, payment_session_id: paymentSessionId })
     res.json(toPixPaymentDto(paymentSession))
     return
   }
@@ -100,5 +105,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     },
   })
 
+  await attachPixPaymentAccess(req, res, { cart_id: cartId, payment_session_id: paymentSessionId })
   res.json(toPixPaymentDto(updatedPaymentSession))
 }

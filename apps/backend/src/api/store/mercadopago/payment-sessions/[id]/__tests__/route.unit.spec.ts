@@ -1,6 +1,17 @@
+const revokeRunMock = jest.fn()
+
+jest.mock("../../../../../../workflows/payment-access/revoke-payment-session-access", () => ({
+  revokePaymentSessionAccessWorkflow: jest.fn(() => ({ run: (...args: unknown[]) => revokeRunMock(...args) })),
+}))
+
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 
 import { POST } from "../route"
+
+beforeEach(() => {
+  revokeRunMock.mockReset()
+  revokeRunMock.mockResolvedValue({ result: 0 })
+})
 
 const PAYMENT_COLLECTION_ID = "paycol_123"
 
@@ -35,6 +46,7 @@ function buildReq(overrides: {
       { id: "cart_123", payment_collection: { id: PAYMENT_COLLECTION_ID } },
     ]
   const graph = jest.fn(async () => ({ data: cartGraphData }))
+  const logger = { warn: jest.fn() }
 
   const req: any = {
     params: { id: paymentSession.id },
@@ -53,13 +65,81 @@ function buildReq(overrides: {
           return { graph }
         }
 
+        if (key === ContainerRegistrationKeys.LOGGER) {
+          return logger
+        }
+
         throw new Error(`Unexpected module request: ${key}`)
       },
     },
   }
 
-  return { req, retrievePaymentSession, updatePaymentSession, authorizePaymentSession, graph }
+  return { req, logger, retrievePaymentSession, updatePaymentSession, authorizePaymentSession, graph }
 }
+
+describe("mercadopago payment session route — Pix payment capability revocation", () => {
+  const pixSession = {
+    id: "payses_123",
+    amount: 100,
+    currency_code: "BRL",
+    provider_id: "pp_mercadopago",
+    payment_collection_id: PAYMENT_COLLECTION_ID,
+    data: { payment_method_id: "pix", cart_id: "cart_123", mercadopago_order_id: "ORD_PIX_A" },
+  }
+  const cardBody = {
+    cart_id: "cart_123",
+    card_token: "cardtoken_123",
+    payment_method_id: "visa",
+    payment_type_id: "credit_card",
+    installments: 1,
+    transaction_amount: 100,
+  }
+
+  it("revokes the session's Pix capabilities when it switches from Pix to card", async () => {
+    const { req } = buildReq({ paymentSession: pixSession, body: cardBody })
+    const res: any = { json: jest.fn() }
+
+    await POST(req, res)
+
+    expect(revokeRunMock).toHaveBeenCalledWith({
+      input: { payment_session_id: "payses_123", reason: "payment_method_changed" },
+    })
+    expect(res.json).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not revoke when the session stays Pix (resubmitted Pix data)", async () => {
+    const { req } = buildReq({
+      paymentSession: pixSession,
+      body: { cart_id: "cart_123", payment_method_id: "pix", amount: 100 },
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    expect(revokeRunMock).not.toHaveBeenCalled()
+  })
+
+  it("does not revoke for a card session updated with card data", async () => {
+    const { req } = buildReq({
+      paymentSession: { ...pixSession, data: { payment_method_id: "visa" } },
+      body: cardBody,
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    expect(revokeRunMock).not.toHaveBeenCalled()
+  })
+
+  it("still answers when the revocation fails (the read route rejects non-Pix sessions anyway)", async () => {
+    revokeRunMock.mockRejectedValue(new Error("db down"))
+    const { req, logger } = buildReq({ paymentSession: pixSession, body: cardBody })
+    const res: any = { json: jest.fn() }
+
+    await POST(req, res)
+
+    expect(res.json).toHaveBeenCalledTimes(1)
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("payses_123"))
+  })
+})
 
 describe("mercadopago payment session route", () => {
   it("updates the Medusa payment session without authorizing it", async () => {

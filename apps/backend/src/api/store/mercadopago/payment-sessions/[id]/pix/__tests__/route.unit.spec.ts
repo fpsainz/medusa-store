@@ -1,6 +1,22 @@
+const issueRunMock = jest.fn()
+
+jest.mock("../../../../../../../workflows/payment-access/issue-pix-payment-access", () => ({
+  issuePixPaymentAccessWorkflow: jest.fn(() => ({ run: (...args: unknown[]) => issueRunMock(...args) })),
+}))
+
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 
 import { POST } from "../route"
+
+const ISSUED = {
+  token: `pat_${"A".repeat(43)}`,
+  expires_at: "2026-09-27T13:15:00.000Z",
+}
+
+beforeEach(() => {
+  issueRunMock.mockReset()
+  issueRunMock.mockResolvedValue({ result: null })
+})
 
 const PAYMENT_COLLECTION_ID = "paycol_123"
 
@@ -57,6 +73,8 @@ function buildReq(overrides: {
   ]
   const graph = jest.fn(async () => ({ data: cartGraphData }))
 
+  const logger = { warn: jest.fn() }
+
   const req: any = {
     params: { id: paymentSession.id },
     body: overrides.body ?? { cart_id: "cart_123" },
@@ -68,6 +86,9 @@ function buildReq(overrides: {
         if (key === ContainerRegistrationKeys.QUERY) {
           return { graph }
         }
+        if (key === ContainerRegistrationKeys.LOGGER) {
+          return logger
+        }
         throw new Error(`Unexpected module request: ${key}`)
       },
     },
@@ -75,8 +96,88 @@ function buildReq(overrides: {
 
   const res: any = { json: jest.fn(), setHeader: jest.fn() }
 
-  return { req, res, retrievePaymentSession, updatePaymentSession, authorizePaymentSession }
+  return { req, res, logger, retrievePaymentSession, updatePaymentSession, authorizePaymentSession }
 }
+
+describe("POST /store/mercadopago/payment-sessions/:id/pix — Pix payment capability", () => {
+  const tokenHeaderCalls = (res: any) =>
+    res.setHeader.mock.calls.filter(([name]: [string]) => name.startsWith("x-payment-access"))
+
+  it("issues the capability for the prepared session and sends it only in response headers", async () => {
+    issueRunMock.mockResolvedValue({ result: ISSUED })
+    const { req, res } = buildReq()
+
+    await POST(req, res)
+
+    expect(issueRunMock).toHaveBeenCalledWith({
+      input: { cart_id: "cart_123", payment_session_id: "payses_pix" },
+    })
+    expect(res.setHeader).toHaveBeenCalledWith("x-payment-access-token", ISSUED.token)
+    expect(res.setHeader).toHaveBeenCalledWith("x-payment-access-expires-at", ISSUED.expires_at)
+    expect(JSON.stringify(res.json.mock.calls[0][0])).not.toContain(ISSUED.token)
+  })
+
+  it("also issues it when the session is already authorized (paid before Place order)", async () => {
+    issueRunMock.mockResolvedValue({ result: ISSUED })
+    const { req, res } = buildReq({
+      paymentSession: { ...PIX_SESSION, status: "authorized", data: PREPARED_DATA },
+    })
+
+    await POST(req, res)
+
+    expect(issueRunMock).toHaveBeenCalledTimes(1)
+    expect(res.setHeader).toHaveBeenCalledWith("x-payment-access-token", ISSUED.token)
+  })
+
+  it("sends no capability header when none may be issued", async () => {
+    const { req, res } = buildReq()
+
+    await POST(req, res)
+
+    expect(tokenHeaderCalls(res)).toHaveLength(0)
+    expect(res.json).toHaveBeenCalledTimes(1)
+  })
+
+  it("still prepares the Pix charge when issuing the capability fails", async () => {
+    issueRunMock.mockRejectedValue(new Error('relation "payment_access_grant" does not exist'))
+    const { req, res, logger } = buildReq()
+
+    await POST(req, res)
+
+    expect(res.json).toHaveBeenCalledTimes(1)
+    expect(tokenHeaderCalls(res)).toHaveLength(0)
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("payses_pix"))
+  })
+
+  it("issues again on every call (repeated/concurrent prepares); the module keeps at most 3 active", async () => {
+    issueRunMock.mockResolvedValue({ result: ISSUED })
+    const first = buildReq()
+    const second = buildReq({ paymentSession: { ...PIX_SESSION, data: PREPARED_DATA } })
+
+    await Promise.all([POST(first.req, first.res), POST(second.req, second.res)])
+
+    expect(issueRunMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("never issues for a completed cart, another cart's session or a non-Pix session", async () => {
+    const completed = buildReq({
+      cartGraphData: [{ id: "cart_123", completed_at: "2026-09-27T12:00:00.000Z", payment_collection: { id: PAYMENT_COLLECTION_ID } }],
+    })
+    await expect(POST(completed.req, completed.res)).rejects.toThrow()
+
+    const otherCart = buildReq({
+      cartGraphData: [{ id: "cart_123", completed_at: null, payment_collection: { id: "paycol_other" } }],
+    })
+    await expect(POST(otherCart.req, otherCart.res)).rejects.toThrow()
+
+    const card = buildReq({
+      paymentSession: { ...PIX_SESSION, data: { ...PIX_SESSION.data, payment_method_id: "visa" } },
+    })
+    await expect(POST(card.req, card.res)).rejects.toThrow()
+
+    expect(issueRunMock).not.toHaveBeenCalled()
+  })
+})
 
 describe("POST /store/mercadopago/payment-sessions/:id/pix", () => {
   it("prepares the Pix charge through the Payment Module and returns the safe DTO", async () => {

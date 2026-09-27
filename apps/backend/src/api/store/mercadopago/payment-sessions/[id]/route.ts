@@ -2,6 +2,7 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, MedusaError, Modules } from "@medusajs/framework/utils"
 
 import { isCardPaymentType } from "../../../../../modules/mercadopago/service"
+import { revokePaymentSessionAccessWorkflow } from "../../../../../workflows/payment-access/revoke-payment-session-access"
 
 // Same identity as apps/backend/src/api/hooks/payment/[provider]/route.ts (see
 // that file's comment): medusa-config.ts has no `id` for this provider, and
@@ -195,6 +196,27 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       ...allowedData,
     },
   })
+
+  // Leaving Pix revokes the session's Pix payment capabilities (ADR-007). The
+  // read route also rejects a non-Pix session, so a failed revocation is
+  // logged instead of failing the update.
+  const wasPix = (paymentSession.data ?? {}).payment_method_id === "pix"
+  const isPix = (updatedPaymentSession.data ?? {}).payment_method_id === "pix"
+  if (wasPix && !isPix) {
+    try {
+      await revokePaymentSessionAccessWorkflow(req.scope).run({
+        input: { payment_session_id: paymentSessionId, reason: "payment_method_changed" },
+      })
+    } catch (error) {
+      req.scope
+        .resolve(ContainerRegistrationKeys.LOGGER)
+        .warn(
+          `Mercado Pago: could not revoke Pix payment capabilities of payment session ${paymentSessionId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+    }
+  }
 
   res.json({
     payment_session: updatedPaymentSession,

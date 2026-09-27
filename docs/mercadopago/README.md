@@ -35,6 +35,8 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 | `apps/backend/src/api/store/mercadopago/payment-sessions/[id]/pix/route.ts` | Prepara/regenera a cobrança Pix. |
 | `apps/backend/src/api/store/mercadopago/carts/[id]/pix/route.ts` | Estado da cobrança Pix do cart (polling). |
 | `apps/backend/src/api/store/mercadopago/orders/[id]/pix/route.ts` | Dados Pix do pedido. |
+| `apps/backend/src/workflows/payment-access/` | Emissão (`issuePixPaymentAccessWorkflow`, regra em `pix-access-binding.ts`) e revogação (`revokePaymentSessionAccessWorkflow`) da capability Pix. |
+| `apps/backend/src/api/utils/pix-payment-access.ts` | Anexa a capability emitida aos headers da resposta do prepare. |
 | `apps/storefront/src/modules/checkout/components/mercadopago-payment-container/index.tsx` | Brick + `onSubmit`. |
 | `apps/storefront/src/modules/order/components/payment-details/pix-payment-panel.tsx` | Painel Pix da Review. |
 | `apps/storefront/src/modules/checkout/components/payment-button/index.tsx` | `MercadoPagoPaymentButton` → `placeOrder`. |
@@ -56,6 +58,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
    - Caso contrário → cancela a anterior (se pendente) e cria outra com a próxima "geração" de idempotency key.
    - Toda Order Pix nova é criada com `transactions.payments[].expiration_time: "PT1H"`. A deadline conservadora (`computePixDeadline`) fica em `mercadopago_pix_expires_at` e é o `expires_at` dos DTOs ([ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)).
    - A session continua `pending`. Ver [ADR-003](../decisions/ADR-003-pix-charge-created-at-review.md).
+   - Em seguida a rota roda `issuePixPaymentAccessWorkflow` e, se couber, emite uma capability de leitura `pix_payment_view` ([ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)). O token vai **só** nos headers de resposta `x-payment-access-token` e `x-payment-access-expires-at`, nunca no corpo. Falha na emissão não falha o prepare (fica só sem capability).
 3. O painel faz polling de `GET /store/mercadopago/carts/:id/pix` (5 s, máx. 180). Enquanto o status não é terminal, a rota lê a Order ao vivo no Mercado Pago (só leitura; não grava na session). Depois de `completed_at` (por exemplo, o webhook concluiu o cart com a Review aberta), a rota responde **410 sem corpo**: o painel esconde QR e ticket, informa que o pedido já foi concluído e libera "Place order", que devolve o pedido existente porque o `completeCartWorkflow` do Medusa 2.20.1 é idempotente (link `order_cart`).
 4. "Place order" só é liberado com a cobrança `pending` com dados pagáveis (QR/copia-e-cola/ticket) ou `approved`.
 5. `completeCart` → `authorizePayment` → `authorizePix`. Se já existe Order: `reauthorizePixOrder` (lê a Order, confere o valor e mapeia com `resolvePixStatus`). Se não existe: cria a Order (fallback).
