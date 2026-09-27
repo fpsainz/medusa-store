@@ -8,9 +8,8 @@ import {
   preparePixPayment,
   retrieveCartPixPayment,
   type CartPixPoll,
-  type PixCharge,
-  type PixChargeStatus,
 } from "@lib/data/cart"
+import type { PixCharge, PixChargeStatus } from "@lib/util/pix-client"
 import PixChargeDetails, {
   PIX_MAX_POLLS,
   PIX_POLL_INTERVAL_MS,

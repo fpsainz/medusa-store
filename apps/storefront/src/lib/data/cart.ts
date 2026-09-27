@@ -280,10 +280,10 @@ export async function updateMercadoPagoPaymentSession(
     .catch(medusaError)
 }
 
-// State of the cart's Mercado Pago Pix charge. `status` is a presentation
-// status derived from Mercado Pago's native statuses; it is not a Medusa
-// Order status. Defined with the client boundary in @lib/util/pix-client.
-export type { PixCharge, PixChargeStatus } from "@lib/util/pix-client"
+// The Pix charge types (PixCharge, PixChargeStatus) live with the client
+// boundary in @lib/util/pix-client. They are not re-exported here: a
+// "use server" file may only export async functions (Turbopack rejects a
+// type re-export at runtime, even though `next build` accepts it).
 
 // Asks the backend to create (or reuse) the Mercado Pago Pix charge of the
 // cart's payment session. Idempotent: repeated calls return the same charge
