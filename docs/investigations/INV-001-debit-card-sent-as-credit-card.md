@@ -308,7 +308,7 @@ A correção vem com um ADR, porque muda o contrato storefront → backend. Pix 
    - `prepaid_card` exige omitir `installments`;
    - é preciso decidir como tratar esse caso.
 
-### 11. Correção implementada (2026-09-27, não commitada)
+### 11. Correção implementada (2026-09-27, commit `3a56150`)
 
 Decisões [decisão humana 2026-09-27]:
 - **Débito:** `debitCard: "all"` mantido.
