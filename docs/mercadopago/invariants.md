@@ -34,6 +34,7 @@ Specs (caminhos relativos a `apps/backend/src/`):
 11. **Idempotency key do Pix:** derivada da key base + valor + "geração". Cada substituição incrementa a geração, então uma Order nova nunca reaproveita a key da anterior. Cancelamento usa `sha256(<pix key>:cancel)`. — `getPixIdempotencyKey`, `createPixOrder`, `invalidatePixOrder`. Teste: `S`.
 12. **Sinais Pix e não-Pix ao mesmo tempo na session lançam erro** antes de qualquer chamada externa. A ausência de campos de cartão não indica Pix. — `isPixSession`. Teste: `S` (Pix discriminator).
 13. **Rotas de leitura do Pix não gravam na session.** A session só muda via webhook, `completeCart` ou a rota `prepare`. — `carts/[id]/pix`, `orders/[id]/pix`. Testes: `CX`, `OX`.
+25. **Toda cobrança Pix é criada com prazo explícito e deadline conservadora.** `createPixOrder` envia `transactions.payments[].expiration_time: "PT1H"` e grava em `mercadopago_pix_expires_at` a menor entre início da requisição + 1 h, `created_date` + 1 h e qualquer data absoluta válida da resposta; durações e valores inválidos são ignorados. Uma nova tentativa de criação usa o mesmo corpo e a mesma idempotency key. — `createPixOrder`, `computePixDeadline`. Teste: `S`. [ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)
 
 ## Exposição de dados ao storefront
 

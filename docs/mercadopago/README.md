@@ -54,6 +54,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
    - Order Pix existente, pagável e com o mesmo valor → reutiliza.
    - Já paga → devolve como está (nunca substitui).
    - Caso contrário → cancela a anterior (se pendente) e cria outra com a próxima "geração" de idempotency key.
+   - Toda Order Pix nova é criada com `transactions.payments[].expiration_time: "PT1H"`. A deadline conservadora (`computePixDeadline`) fica em `mercadopago_pix_expires_at` e é o `expires_at` dos DTOs ([ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)).
    - A session continua `pending`. Ver [ADR-003](../decisions/ADR-003-pix-charge-created-at-review.md).
 3. O painel faz polling de `GET /store/mercadopago/carts/:id/pix` (5 s, máx. 180). Enquanto o status não é terminal, a rota lê a Order ao vivo no Mercado Pago (só leitura; não grava na session).
 4. "Place order" só é liberado com a cobrança `pending` com dados pagáveis (QR/copia-e-cola/ticket) ou `approved`.

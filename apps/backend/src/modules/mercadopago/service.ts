@@ -45,6 +45,48 @@ export const PIX_TERMINAL_STATUSES: readonly PixDisplayStatus[] = [
   'charged_back',
 ]
 
+// Payment window of every Pix charge, sent as
+// transactions.payments[].expiration_time (ISO 8601 duration; Mercado Pago
+// accepts 30 minutes to 30 days and defaults to 24 hours when omitted).
+// Business decision recorded in ADR-007.
+export const PIX_EXPIRATION_TIME = 'PT1H'
+const PIX_EXPIRATION_MS = 60 * 60 * 1000
+
+function parseInstant(value: unknown): number | undefined {
+  if (typeof value !== 'string' || value.length === 0) {
+    return undefined
+  }
+
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? time : undefined
+}
+
+// Conservative deadline of a Pix charge: the earliest of
+//   - when this process started the create request + the payment window
+//     (never later than Mercado Pago's own creation time for a new Order);
+//   - the Order's created_date + the payment window, when returned (covers
+//     an idempotent replay that returns an Order created earlier);
+//   - any absolute date the response carries (date_of_expiration, or an
+//     expiration_time that is a date-time rather than a duration).
+// Whether the Orders API returns an absolute date is not confirmed, so it is
+// only used when present and valid, never required.
+export function computePixDeadline(input: {
+  requestStartedAt: number
+  orderCreatedDate?: string
+  dateOfExpiration?: string
+  expirationTime?: string
+}): string {
+  const createdAt = parseInstant(input.orderCreatedDate)
+  const candidates = [
+    input.requestStartedAt + PIX_EXPIRATION_MS,
+    createdAt !== undefined ? createdAt + PIX_EXPIRATION_MS : undefined,
+    parseInstant(input.dateOfExpiration),
+    parseInstant(input.expirationTime),
+  ].filter((value): value is number => value !== undefined)
+
+  return new Date(Math.min(...candidates)).toISOString()
+}
+
 // Session data fields that describe the Mercado Pago Pix Order currently
 // attached to a Payment Session. Removed together when that Order stops
 // being the session's charge (payment method switched, or replaced).
@@ -62,6 +104,7 @@ const PIX_ORDER_FIELDS = [
   'mercadopago_pix_ticket_url',
   'mercadopago_pix_date_of_expiration',
   'mercadopago_pix_expiration_time',
+  'mercadopago_pix_expires_at',
   'mercadopago_pix_idempotency_key',
   'mercadopago_external_reference',
 ] as const
@@ -159,6 +202,7 @@ export function toPixPaymentDto(session: {
     qr_code_base64: getStringField(data, 'mercadopago_pix_qr_code_base64'),
     ticket_url: getStringField(data, 'mercadopago_pix_ticket_url'),
     expires_at:
+      getStringField(data, 'mercadopago_pix_expires_at') ??
       getStringField(data, 'mercadopago_pix_date_of_expiration') ??
       getStringField(data, 'mercadopago_pix_expiration_time'),
   }
@@ -177,7 +221,13 @@ export function hasPixOrderData(data: PaymentData): boolean {
   )
 }
 
-type PixOrderLike = { id?: string; status?: string; status_detail?: string; total_amount?: string }
+type PixOrderLike = {
+  id?: string
+  status?: string
+  status_detail?: string
+  total_amount?: string
+  created_date?: string
+}
 
 type PixOrderPaymentLike = {
   id?: string
@@ -639,6 +689,7 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
       )
     }
 
+    const requestStartedAt = Date.now()
     const order = await this.orderClient.create({
       body: {
         type: 'online',
@@ -656,6 +707,7 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
                 id: 'pix',
                 type: 'bank_transfer',
               },
+              expiration_time: PIX_EXPIRATION_TIME,
             },
           ],
         },
@@ -696,6 +748,12 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
         mercadopago_idempotency_key: idempotencyKey,
         mercadopago_pix_idempotency_key: pixIdempotencyKey,
         mercadopago_pix_generation: generation,
+        mercadopago_pix_expires_at: computePixDeadline({
+          requestStartedAt,
+          orderCreatedDate: order.created_date,
+          dateOfExpiration: payment.date_of_expiration,
+          expirationTime: payment.expiration_time,
+        }),
       },
     }
   }

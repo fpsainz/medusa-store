@@ -49,19 +49,22 @@ Marcadores de origem: [../README.md](../README.md#convenções). Além deles, **
 4. **Transporte.** O token existe só entre o Medusa e o Next Server. O browser recebe apenas um cookie HttpOnly. O Next Server envia o token ao Medusa por header, nunca por URL. Server Actions devolvem o DTO sem o token.
 5. **Leitura.** `GET /store/mercadopago/payment-access/pix` não recebe `order_id` nem `payment_session_id` do cliente: resolve session, collection e order a partir da capability e revalida o estado atual (session existe, é `pp_mercadopago`, é Pix, pertence à collection). Qualquer falha dá a mesma resposta genérica. O token nunca é aceito em query string.
 6. **Estado e DTO.** O estado é o primeiro destes a acontecer: session `authorized` no Medusa, leitura ao vivo da Order Mercado Pago ou deadline local. QR, ticket e expiração saem só com o Pix pendente **e** antes da deadline; depois disso, só o status. A resposta é uma allowlist explícita.
-7. **Deadline.** `createPixOrder` passa a enviar `expiration_time`. A deadline é calculada de forma conservadora no backend (início da requisição + duração). Se a resposta trouxer uma data absoluta, vale a menor das duas.
+7. **Deadline.** `createPixOrder` passa a enviar `expiration_time: "PT1H"` (1 hora) [decisão humana 2026-09-27]. A deadline é calculada de forma conservadora no backend: a menor entre início da requisição + 1 h, `created_date` da Order + 1 h (quando vier; cobre replay idempotente de uma Order criada antes) e qualquer data absoluta válida da resposta. Fica em `mercadopago_pix_expires_at`.
 8. **Revogação.** Na troca de Pix para outro método na mesma session, além da revalidação a cada leitura.
 9. **Atualização de status.** Polling por Server Action. Sem SSE nem WebSocket.
 10. **Escopo.** Cartão e débito não usam a capability. Boleto poderá reutilizar o núcleo com política própria (a deadline não pode ser "agora + duração", porque o vencimento é ajustado para dia útil [MCP 2026-09-27]). Um link de resgate de uso único para boleto não faz parte desta decisão.
 11. **`carts/:id/pix`.** Deixa de responder depois de `completed_at`, e seu DTO perde os campos internos (`mercadopago_order_id` e status nativos).
 12. **Migração.** `GET /store/mercadopago/orders/:id/pix` e `retrievePixPayment` permanecem até o novo fluxo passar no E2E sandbox e então são removidos.
 
-### Ainda a decidir (bloqueia a etapa correspondente)
+### Parâmetros [decisão humana 2026-09-27]
 
-- Duração do Pix (`expiration_time`): decisão de negócio.
-- Grace period depois da deadline ou do estado final.
-- Limite de capabilities ativas por session.
-- TTL máximo absoluto da capability.
+- Duração do Pix: `PT1H` (1 hora).
+- Grace period depois da deadline ou do estado final: 15 minutos, com resposta só de status.
+- Limite de capabilities ativas por session: 3. Ao exceder, a mais antiga é revogada.
+- TTL máximo da capability: duração do Pix + grace, sem teto adicional.
+
+### Ainda a decidir
+
 - Retenção de capabilities expiradas antes da limpeza.
 
 ## Alternativas consideradas

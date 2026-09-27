@@ -13,7 +13,12 @@ jest.mock("mercadopago", () => {
   }
 })
 
-import MercadoPagoPaymentProviderService, { normalizePixStatus, toPixPaymentDto } from "../service"
+import MercadoPagoPaymentProviderService, {
+  PIX_EXPIRATION_TIME,
+  computePixDeadline,
+  normalizePixStatus,
+  toPixPaymentDto,
+} from "../service"
 
 describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
   function buildProvider() {
@@ -647,6 +652,85 @@ describe("MercadoPagoPaymentProviderService — Pix charge lifecycle (Review)", 
     expect(result.data).not.toHaveProperty("mercadopago_pix_action")
   })
 
+  describe("payment window (expiration_time)", () => {
+    const NOW = Date.parse("2026-09-27T12:00:00.000Z")
+
+    beforeEach(() => {
+      jest.spyOn(Date, "now").mockReturnValue(NOW)
+    })
+
+    afterEach(() => {
+      jest.restoreAllMocks()
+    })
+
+    it("sends expiration_time PT1H on the Pix payment and stores the conservative deadline", async () => {
+      const order = pixOrder()
+      delete (order.transactions.payments[0] as Record<string, unknown>).date_of_expiration
+      orderCreateMock.mockResolvedValue(order)
+      const provider = buildProvider()
+
+      const result = await prepare(provider, PIX_SESSION_DATA)
+
+      const body = orderCreateMock.mock.calls[0][0].body
+      expect(PIX_EXPIRATION_TIME).toBe("PT1H")
+      expect(body.transactions.payments[0].expiration_time).toBe("PT1H")
+      expect(body).not.toHaveProperty("expiration_time")
+      expect(result.data.mercadopago_pix_expires_at).toBe("2026-09-27T13:00:00.000Z")
+    })
+
+    it("keeps an earlier absolute date returned by Mercado Pago as the deadline", async () => {
+      orderCreateMock.mockResolvedValue(
+        pixOrder({
+          transactions: {
+            payments: [
+              {
+                id: "PAY_PIX_A",
+                status: "action_required",
+                status_detail: "waiting_transfer",
+                date_of_expiration: "2026-09-27T12:45:00.000Z",
+                payment_method: { qr_code: "000201", ticket_url: "https://ticket" },
+              },
+            ],
+          },
+        })
+      )
+      const provider = buildProvider()
+
+      const result = await prepare(provider, PIX_SESSION_DATA)
+
+      expect(result.data.mercadopago_pix_expires_at).toBe("2026-09-27T12:45:00.000Z")
+    })
+
+    it("keeps the same request body, and so the same idempotency key, on a retried create", async () => {
+      orderCreateMock.mockRejectedValueOnce(new Error("network")).mockResolvedValueOnce(pixOrder())
+      const provider = buildProvider()
+
+      await expect(prepare(provider, PIX_SESSION_DATA)).rejects.toThrow("network")
+      await prepare(provider, PIX_SESSION_DATA)
+
+      const [first, second] = orderCreateMock.mock.calls
+      expect(second[0].body).toEqual(first[0].body)
+      expect(second[0].requestOptions.idempotencyKey).toBe(first[0].requestOptions.idempotencyKey)
+    })
+
+    it("reusing the attached charge keeps its stored deadline", async () => {
+      orderGetMock.mockResolvedValue(pixOrder())
+      const provider = buildProvider()
+
+      const result = await prepare(provider, {
+        ...PIX_SESSION_DATA,
+        amount: 50,
+        mercadopago_order_id: "ORD_PIX_A",
+        mercadopago_order_payment_method: "pix",
+        mercadopago_pix_qr_code: "000201-pix-copia-e-cola",
+        mercadopago_pix_expires_at: "2026-09-27T12:30:00.000Z",
+      })
+
+      expect(orderCreateMock).not.toHaveBeenCalled()
+      expect(result.data.mercadopago_pix_expires_at).toBe("2026-09-27T12:30:00.000Z")
+    })
+  })
+
   it("prepare: preserves the base idempotency key and uses a derived, distinct key for the Pix Order", async () => {
     orderCreateMock.mockResolvedValue(pixOrder())
     const provider = buildProvider()
@@ -976,6 +1060,40 @@ describe("normalizePixStatus", () => {
   })
 })
 
+describe("computePixDeadline", () => {
+  const START = Date.parse("2026-09-27T12:00:00.000Z")
+
+  it("is the request start plus one hour when Mercado Pago returns no dates", () => {
+    expect(computePixDeadline({ requestStartedAt: START })).toBe("2026-09-27T13:00:00.000Z")
+  })
+
+  it("uses the Order creation time when it is earlier (idempotent replay)", () => {
+    expect(
+      computePixDeadline({ requestStartedAt: START, orderCreatedDate: "2026-09-27T11:40:00.000Z" })
+    ).toBe("2026-09-27T12:40:00.000Z")
+  })
+
+  it("uses a returned absolute date only when it is earlier", () => {
+    expect(
+      computePixDeadline({ requestStartedAt: START, dateOfExpiration: "2026-09-27T12:50:00.000Z" })
+    ).toBe("2026-09-27T12:50:00.000Z")
+    expect(
+      computePixDeadline({ requestStartedAt: START, dateOfExpiration: "2026-09-28T12:00:00.000Z" })
+    ).toBe("2026-09-27T13:00:00.000Z")
+  })
+
+  it("ignores durations and invalid values", () => {
+    expect(
+      computePixDeadline({
+        requestStartedAt: START,
+        expirationTime: "PT1H",
+        dateOfExpiration: "not-a-date",
+        orderCreatedDate: "",
+      })
+    ).toBe("2026-09-27T13:00:00.000Z")
+  })
+})
+
 describe("toPixPaymentDto", () => {
   const data = {
     payer: { email: "buyer@example.com", identification: { type: "CPF", number: "12345678909" } },
@@ -1010,6 +1128,15 @@ describe("toPixPaymentDto", () => {
       expires_at: "2026-09-26T12:00:00.000-03:00",
     })
     expect(JSON.stringify(dto)).not.toMatch(/buyer@example|12345678909|tok_secret|pix-key/)
+  })
+
+  it("prefers the stored conservative deadline as expires_at", () => {
+    const dto = toPixPaymentDto({
+      status: "pending",
+      data: { ...data, mercadopago_pix_expires_at: "2026-09-26T11:00:00.000Z" },
+    })
+
+    expect(dto.expires_at).toBe("2026-09-26T11:00:00.000Z")
   })
 
   it("reports approved once Medusa has authorized the session, even with a stale stored MP status", () => {
