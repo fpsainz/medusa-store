@@ -152,6 +152,9 @@ export function normalizePixStatus(input: {
 
 export type PixPaymentDto = {
   status: PixDisplayStatus
+  // Application policy, not a Mercado Pago status: true once the charge's
+  // stored deadline (mercadopago_pix_expires_at) has passed.
+  payment_window_closed?: boolean
   charge_ref?: string
   qr_code?: string
   qr_code_base64?: string
@@ -178,10 +181,21 @@ function toChargeRef(orderId: string | undefined): string | undefined {
 // keys, Mercado Pago ids, native statuses or anything else in session.data.
 // A session Medusa has already authorized (webhook or completeCart) is
 // 'approved' regardless of the last stored Mercado Pago status.
-export function toPixPaymentDto(session: {
-  status?: string | null
-  data?: PaymentData | null
-}): PixPaymentDto {
+//
+// Once the charge's deadline has passed, the QR, copy-and-paste code and
+// ticket link are no longer returned, whatever Mercado Pago still reports:
+// its status can stay action_required for minutes after the due date, and
+// Mercado Pago recommends cancelling charges not paid by then. `status` stays
+// the real, provider-derived one (never turned into expired/canceled here);
+// payment_window_closed says the window is over. Charges without a stored
+// deadline (created before it existed) keep the previous behaviour.
+export function toPixPaymentDto(
+  session: {
+    status?: string | null
+    data?: PaymentData | null
+  },
+  now: Date = new Date()
+): PixPaymentDto {
   const data = session.data ?? undefined
   const orderStatus = getStringField(data, 'mercadopago_order_status')
   const orderStatusDetail = getStringField(data, 'mercadopago_order_status_detail')
@@ -194,12 +208,16 @@ export function toPixPaymentDto(session: {
       ? 'approved'
       : normalizePixStatus({ orderStatus, orderStatusDetail, paymentStatus, paymentStatusDetail })
 
+  const deadline = parseInstant(getStringField(data, 'mercadopago_pix_expires_at'))
+  const windowClosed = deadline !== undefined && now.getTime() >= deadline
+
   return {
     status,
+    ...(windowClosed ? { payment_window_closed: true } : {}),
     charge_ref: toChargeRef(getStringField(data, 'mercadopago_order_id')),
-    qr_code: getStringField(data, 'mercadopago_pix_qr_code'),
-    qr_code_base64: getStringField(data, 'mercadopago_pix_qr_code_base64'),
-    ticket_url: getStringField(data, 'mercadopago_pix_ticket_url'),
+    qr_code: windowClosed ? undefined : getStringField(data, 'mercadopago_pix_qr_code'),
+    qr_code_base64: windowClosed ? undefined : getStringField(data, 'mercadopago_pix_qr_code_base64'),
+    ticket_url: windowClosed ? undefined : getStringField(data, 'mercadopago_pix_ticket_url'),
     expires_at:
       getStringField(data, 'mercadopago_pix_expires_at') ??
       getStringField(data, 'mercadopago_pix_date_of_expiration') ??

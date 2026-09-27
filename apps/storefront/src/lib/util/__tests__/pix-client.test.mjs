@@ -44,6 +44,12 @@ describe("toClientPixCharge (what reaches a Client Component)", () => {
     assert.doesNotMatch(JSON.stringify(charge), /pat_|order_1|ORD_PIX_A|buyer@example/)
   })
 
+  it("passes payment_window_closed only as the boolean true", () => {
+    assert.equal(toClientPixCharge({ status: "pending", payment_window_closed: true }).payment_window_closed, true)
+    assert.equal("payment_window_closed" in toClientPixCharge({ status: "pending", payment_window_closed: "true" }), false)
+    assert.equal("payment_window_closed" in toClientPixCharge({ status: "pending" }), false)
+  })
+
   it("never lets a non-string value through and maps unknown statuses to unknown", () => {
     assert.deepEqual(toClientPixCharge({ status: "hacked", qr_code: { nested: TOKEN } }), { status: "unknown" })
     assert.deepEqual(toClientPixCharge(null), { status: "unknown" })

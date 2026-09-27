@@ -208,6 +208,53 @@ describe("GET /store/mercadopago/carts/:id/pix", () => {
     })
   })
 
+  it("past the stored deadline: hides the QR/ticket but keeps the live Mercado Pago status (still pending)", async () => {
+    orderGetMock.mockResolvedValue(liveOrder("action_required", "waiting_transfer"))
+    const past = new Date(Date.now() - 2 * 60 * 1000).toISOString()
+    const { req, res } = buildReq(
+      cartWithSessions([
+        {
+          id: "payses_pix",
+          provider_id: "pp_mercadopago",
+          status: "pending",
+          data: { ...STORED_PIX_DATA, mercadopago_pix_expires_at: past },
+        },
+      ])
+    )
+
+    await GET(req, res)
+
+    const dto = res.json.mock.calls[0][0]
+    expect(dto.status).toBe("pending")
+    expect(dto.payment_window_closed).toBe(true)
+    expect(dto.qr_code).toBeUndefined()
+    expect(dto.qr_code_base64).toBeUndefined()
+    expect(dto.ticket_url).toBeUndefined()
+    expect(dto.expires_at).toBe(past)
+  })
+
+  it("before the stored deadline: returns the QR/ticket", async () => {
+    orderGetMock.mockResolvedValue(liveOrder("action_required", "waiting_transfer"))
+    const future = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    const { req, res } = buildReq(
+      cartWithSessions([
+        {
+          id: "payses_pix",
+          provider_id: "pp_mercadopago",
+          status: "pending",
+          data: { ...STORED_PIX_DATA, mercadopago_pix_expires_at: future },
+        },
+      ])
+    )
+
+    await GET(req, res)
+
+    const dto = res.json.mock.calls[0][0]
+    expect(dto.status).toBe("pending")
+    expect(dto.qr_code).toBe("000201")
+    expect(dto).not.toHaveProperty("payment_window_closed")
+  })
+
   it("returns 404 for an unknown cart", async () => {
     const { req, res } = buildReq([])
 

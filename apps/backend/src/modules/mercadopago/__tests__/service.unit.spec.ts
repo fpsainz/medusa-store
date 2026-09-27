@@ -1142,6 +1142,50 @@ describe("toPixPaymentDto", () => {
     expect(toPixPaymentDto({ status: "pending", data: { payment_method_id: "pix" } }).charge_ref).toBeUndefined()
   })
 
+  describe("payment window (application policy, not a Mercado Pago status)", () => {
+    const withDeadline = { ...data, mercadopago_pix_expires_at: "2026-09-27T13:00:00.000Z" }
+
+    it("before the deadline: payable data, no window flag", () => {
+      const dto = toPixPaymentDto({ status: "pending", data: withDeadline }, new Date("2026-09-27T12:59:59.000Z"))
+
+      expect(dto.qr_code).toBe("000201")
+      expect(dto.ticket_url).toBe("https://ticket")
+      expect(dto).not.toHaveProperty("payment_window_closed")
+    })
+
+    it("from the deadline on: no QR/copy-paste/ticket, status stays the real one (pending), window flagged", () => {
+      const dto = toPixPaymentDto({ status: "pending", data: withDeadline }, new Date("2026-09-27T13:00:00.000Z"))
+
+      expect(dto.status).toBe("pending")
+      expect(dto.payment_window_closed).toBe(true)
+      expect(dto.qr_code).toBeUndefined()
+      expect(dto.qr_code_base64).toBeUndefined()
+      expect(dto.ticket_url).toBeUndefined()
+      expect(dto.expires_at).toBe("2026-09-27T13:00:00.000Z")
+      expect(dto.charge_ref).toEqual(expect.any(String))
+    })
+
+    it("never turns the provider status into expired or canceled", () => {
+      const after = new Date("2026-09-27T14:00:00.000Z")
+
+      expect(toPixPaymentDto({ status: "pending", data: withDeadline }, after).status).toBe("pending")
+      expect(
+        toPixPaymentDto(
+          { status: "pending", data: { ...withDeadline, mercadopago_order_status: "canceled" } },
+          after
+        ).status
+      ).toBe("canceled")
+      expect(toPixPaymentDto({ status: "authorized", data: withDeadline }, after).status).toBe("approved")
+    })
+
+    it("charges without a stored deadline keep their payable data", () => {
+      const dto = toPixPaymentDto({ status: "pending", data }, new Date("2030-01-01T00:00:00.000Z"))
+
+      expect(dto.qr_code).toBe("000201")
+      expect(dto).not.toHaveProperty("payment_window_closed")
+    })
+  })
+
   it("prefers the stored conservative deadline as expires_at", () => {
     const dto = toPixPaymentDto({
       status: "pending",

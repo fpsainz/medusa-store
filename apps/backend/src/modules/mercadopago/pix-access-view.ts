@@ -41,7 +41,7 @@ export function toPixAccessDto(input: {
   order_id: string | null
   now: Date
 }): PixAccessDto {
-  const view = toPixPaymentDto({ status: input.session_status, data: input.data })
+  const view = toPixPaymentDto({ status: input.session_status, data: input.data }, input.now)
   const deadline = parseDeadline(input.data.mercadopago_pix_expires_at)
   const pastDeadline = deadline === undefined || input.now.getTime() >= deadline
 

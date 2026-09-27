@@ -163,7 +163,13 @@ const PixPaymentPanel = ({
   const expirationLabel = formatPixExpiration(pixCharge?.expires_at)
   const isPayable =
     !cartCompleted && status === "pending" && pixCharge !== null && hasPayablePixData(pixCharge)
-  const canRegenerate = !cartCompleted && (status ? REGENERABLE_STATUSES.includes(status) : false)
+  // Past the charge's deadline the backend stops sending anything payable,
+  // even while Mercado Pago still reports it as pending: a new Pix may then be
+  // generated (which cancels the old charge, as Mercado Pago recommends).
+  const paymentWindowClosed = !cartCompleted && pixCharge?.payment_window_closed === true
+  const canRegenerate =
+    !cartCompleted &&
+    (paymentWindowClosed || (status ? REGENERABLE_STATUSES.includes(status) : false))
 
   const statusBlock = cartCompleted ? (
     <div className="flex flex-col gap-1">
@@ -179,6 +185,11 @@ const PixPaymentPanel = ({
       <Text className="txt-medium-plus text-ui-fg-base" data-testid="pix-payment-status">
         {PIX_STATUS_LABELS[pixCharge.status]}
       </Text>
+      {paymentWindowClosed && pixCharge.status !== "approved" && (
+        <Text className="txt-small text-ui-fg-subtle" data-testid="pix-payment-window-closed">
+          The time to pay this Pix has ended. Generate a new Pix to continue.
+        </Text>
+      )}
       {pixCharge.status === "approved" && (
         <Text className="txt-small text-ui-fg-subtle">
           Click &quot;Place order&quot; to finish your order.

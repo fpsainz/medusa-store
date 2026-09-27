@@ -22,6 +22,9 @@ export type PixChargeStatus = (typeof PIX_CHARGE_STATUSES)[number]
 // charge is regenerated); it is not a Mercado Pago id.
 export type PixCharge = {
   status: PixChargeStatus
+  // Application policy (not a Mercado Pago status): the charge's deadline has
+  // passed, so nothing payable is sent any more; a new Pix may be generated.
+  payment_window_closed?: boolean
   charge_ref?: string
   qr_code?: string
   qr_code_base64?: string
@@ -41,6 +44,9 @@ export function toClientPixCharge(body: unknown): PixCharge {
     : "unknown"
 
   const charge: PixCharge = { status }
+  if (source.payment_window_closed === true) {
+    charge.payment_window_closed = true
+  }
   for (const field of CLIENT_STRING_FIELDS) {
     const value = source[field]
     if (typeof value === "string") {
