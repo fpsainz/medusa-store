@@ -9,7 +9,8 @@ const MERCADOPAGO_PROVIDER_ID = "pp_mercadopago"
 // The only session.data field the storefront reads from the generic Store API:
 // the Review step detects a Pix session by payment_method_id === "pix". Every
 // other Pix field reaches the storefront through the dedicated DTO routes
-// (/store/mercadopago/carts/:id/pix, /store/mercadopago/orders/:id/pix).
+// (/store/mercadopago/carts/:id/pix, the prepare route, and
+// /store/mercadopago/payment-access/pix).
 const PUBLIC_DATA_FIELDS = ["payment_method_id"] as const
 
 // Relations whose rows carry the provider's raw data: a Payment Session, and

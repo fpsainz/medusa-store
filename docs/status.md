@@ -148,7 +148,7 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 
 ### Média
 
-4. ✅ **`GET /store/mercadopago/orders/:id/pix`: resposta reduzida ao mínimo** (commit `fix(api): minimize Mercado Pago Pix order response`; invariante 14).
+4. ✅ **`GET /store/mercadopago/orders/:id/pix`: resposta reduzida ao mínimo; depois substituída pela capability e removida ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md))** (commit `fix(api): minimize Mercado Pago Pix order response`; invariante 14).
    - `:id` é o **ID da Order Medusa** (não o da Order Mercado Pago). A rota é usada só pela página de confirmação (`PaymentDetails` em `order-completed-template.tsx`), que também atende guest checkout.
    - **Antes:** devolvia `status`, `qr_code`, `qr_code_base64`, `ticket_url` e `expires_at` da primeira session `pp_mercadopago` do pedido, sem checar se era Pix, para quem conhecesse o ID.
    - **Depois:** só `status` e `ticket_url`, e só para uma session Pix; pedido de cartão → 404. A página do pedido trata qualquer resposta não 404 como Pix. Acesso inalterado, conforme a decisão de não exigir autenticação [decisão humana 2026-09-27].
@@ -171,7 +171,7 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 - ✅ **Exposição de `session.data` pela Store API: corrigida ([ADR-006](decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md), invariante 24).**
   - **Antes** (comprovado na API em execução em 2026-09-27, só com a publishable key e o ID, sem login): `GET /store/carts/:id` devolvia `data` inteiro das sessions do Mercado Pago, com `card_token`, `payer` (e-mail e CPF), `issuer_id`, `installments`, idempotency keys, `mercadopago_order_id`/`payment_id`, status internos, QR/ticket e geração Pix. Isso valia também para carts completos. Com `?fields=`, o mesmo saía em `payments[].data` do cart e em `GET /store/orders/:id` de pedido guest.
   - **Depois** (mesma verificação): em todos esses caminhos, inclusive `?fields=` sem `provider_id`, sai só `data: { payment_method_id }`. O armazenamento não mudou (`session.data` e `payment.data` completos [banco 2026-09-27]).
-  - ✅ `GET /store/mercadopago/orders/:id/pix` reduzida a `status` + `ticket_url` (pendência 4). Etapa intermediária: a substituição por uma capability temporária está proposta no [ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md).
+  - ✅ `GET /store/mercadopago/orders/:id/pix` reduzida a `status` + `ticket_url` (pendência 4) e, depois do E2E da capability, removida. Etapa intermediária: a substituição por uma capability temporária está proposta no [ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md).
 - 🔍 **`GET /store/orders/:id` do core devolve e-mail e endereços a quem tem o ID do pedido** ([INV-002](investigations/INV-002-store-order-retrieve-without-auth.md)). Verificado no código do `@medusajs/medusa` 2.20.1; não verificado em requisição real.
 - ✅ `GET /store/mercadopago/carts/:id/pix` responde 410 sem corpo depois de `completed_at`, e o DTO Pix (também o do prepare) não traz mais `mercadopago_order_id`, `session_status` nem status nativos (invariantes 14 e 26). Validado por testes unitários; ⚠ não reexecutado em E2E.
 
@@ -219,6 +219,7 @@ Banco: 6 grants, todos token_hash hex de 64, nenhum plaintext; 1 superseded, 1 p
   - 16 min depois da deadline: o Mercado Pago mostrava **`canceled`** para o probe; as duas capabilities (deadline + 15 min) → 404 genérico.
 - **Estados no E2E real:** `pending` ✅; `canceled` ✅ (Pix vencido cancelado pelo Mercado Pago); `expired` só pela deadline local ✅. **`approved` e `failed` não reproduzíveis no sandbox** (Pix do checkout não é aprovável: [testing.md](mercadopago/testing.md#pix-no-sandbox)); cobertos só por testes automatizados (`V`, `PAX`).
 - ⚠ **Depende de navegador, não executado:** o Server Action gravar o cookie no browser; a Review reagir ao 410 (esconder a cobrança, liberar "Place order"); a interface da confirmação (modal, polling). Cobertos por `tsc`/lint e pelo teste da fronteira, não por E2E.
+- ✅ `GET /store/mercadopago/orders/:id/pix` e `retrievePixPayment` removidos depois do E2E (commit `refactor(mercadopago): remove legacy Pix order access`).
 - 🔍 `carts/:id/pix` (Review) não aplica a deadline local: por alguns minutos depois da deadline pode mostrar o QR enquanto o Mercado Pago ainda diz `pending`. Pendência separada.
 - 🔍 `POST /store/mercadopago/payment-sessions/:id` devolve `payment_session` inteiro, com `data`; `/store/mercadopago/*` não é coberto pelo ADR-006. Pendência separada.
 

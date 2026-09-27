@@ -29,7 +29,6 @@ Mercado Pago ──webhook──> POST /hooks/payment/mercadopago (backend)
 | `src/api/store/mercadopago/payment-sessions/[id]/route.ts` | `POST`: grava na session os dados do Brick (allowlist). Não autoriza. |
 | `src/api/store/mercadopago/payment-sessions/[id]/pix/route.ts` | `POST`: prepara (cria/reutiliza/regenera) a cobrança Pix na etapa Review. |
 | `src/api/store/mercadopago/carts/[id]/pix/route.ts` | `GET`: estado atual da cobrança Pix do cart (polling da Review). Só leitura. |
-| `src/api/store/mercadopago/orders/[id]/pix/route.ts` | `GET`: dados Pix para a página do pedido. Só leitura. Será substituída pela rota de capability ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md)). |
 | `src/api/store/mercadopago/payment-access/pix/route.ts` | `GET`: dados Pix autorizados por capability (header), sem IDs do cliente. Só leitura. |
 | `src/workflows/payment-access/` | Emissão e revogação da capability Pix. |
 | `src/modules/payment-access` | Módulo `paymentAccess` ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md)): tabela `payment_access_grant` com capabilities temporárias de pagamento (só o hash do token), geração, validação, limite por session e revogação (`grants.ts`, `service.ts`); parâmetros da política Pix em `policies.ts`. Migration em `migrations/`, **ainda não aplicada** (ver [status.md](status.md)). |
@@ -46,9 +45,9 @@ Baseado no starter Next.js do Medusa. Partes específicas do Mercado Pago:
 |---|---|
 | `src/lib/constants.tsx` | `paymentInfoMap` e `isMercadoPago()` (compara com `"pp_mercadopago"`). Mantém entradas do starter (Stripe, PayPal). |
 | `src/lib/data/cart.ts` | `updateMercadoPagoPaymentSession`, `preparePixPayment`, `retrieveCartPixPayment`, `placeOrder` (`sdk.store.cart.complete`). |
-| `src/lib/data/orders.ts` | `retrievePixPayment` (`GET /store/mercadopago/orders/:id/pix`). |
 | `src/lib/util/pix-client.ts` | Fronteira servidor → cliente do Pix: allowlist do que um Client Component recebe (`toClientPixCharge`) e leitura da capability nos headers do prepare (`readIssuedPaymentAccess`). Puro, testado com `node --test`. |
 | `src/lib/data/cookies.ts` | Cookies HttpOnly, inclusive o da capability Pix (`__Host-payment_access` em produção, `_payment_access` em HTTP). |
+| `src/lib/data/orders.ts` | `retrieveOrderPixPayment` (Server Action): Pix do pedido lido com a capability, comparado com o `order_id` da página. |
 | `src/lib/data/payment-access.ts` | `server-only`: `readPixPaymentAccess` lê o Pix com a capability do cookie, por `fetch` nativo com o token em header. |
 | `src/modules/checkout/components/mercadopago-payment-container` | Renderiza o Payment Brick (cartão crédito/débito + Pix, `locale: pt-BR`, até 12 parcelas); `onSubmit` só grava dados na session. |
 | `src/modules/checkout/components/review` | Mostra o `PixPaymentPanel` quando a session tem `payment_method_id === "pix"` e bloqueia o botão até a cobrança estar pagável. |

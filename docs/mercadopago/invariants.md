@@ -10,7 +10,6 @@ Specs (caminhos relativos a `apps/backend/src/`):
 `PS` = `api/store/mercadopago/payment-sessions/[id]/__tests__/route.unit.spec.ts` ·
 `PX` = `.../payment-sessions/[id]/pix/__tests__/route.unit.spec.ts` ·
 `CX` = `.../carts/[id]/pix/__tests__/route.unit.spec.ts` ·
-`OX` = `.../orders/[id]/pix/__tests__/route.unit.spec.ts` ·
 `R` = `api/utils/__tests__/redact-mercadopago-data.unit.spec.ts` ·
 `PA` = `modules/payment-access/__tests__/*.unit.spec.ts` ·
 `WB` = `workflows/payment-access/__tests__/pix-access-binding.unit.spec.ts` ·
@@ -37,15 +36,15 @@ Specs (caminhos relativos a `apps/backend/src/`):
 10. **O valor da Order Pix precisa bater com o da session** (comparação em 2 casas decimais) para reutilizar (`preparePixOrder`) ou autorizar (`reauthorizePixOrder`, que lança `INVALID_DATA` se divergir). Teste: `S`.
 11. **Idempotency key do Pix:** derivada da key base + valor + "geração". Cada substituição incrementa a geração, então uma Order nova nunca reaproveita a key da anterior. Cancelamento usa `sha256(<pix key>:cancel)`. — `getPixIdempotencyKey`, `createPixOrder`, `invalidatePixOrder`. Teste: `S`.
 12. **Sinais Pix e não-Pix ao mesmo tempo na session lançam erro** antes de qualquer chamada externa. A ausência de campos de cartão não indica Pix. — `isPixSession`. Teste: `S` (Pix discriminator).
-13. **Rotas de leitura do Pix não gravam na session.** A session só muda via webhook, `completeCart` ou a rota `prepare`. — `carts/[id]/pix`, `orders/[id]/pix`. Testes: `CX`, `OX`.
+13. **Rotas de leitura do Pix não gravam na session.** A session só muda via webhook, `completeCart` ou a rota `prepare`. — `carts/[id]/pix`, `payment-access/pix`. Testes: `CX`, `PAX`.
 25. **Toda cobrança Pix é criada com prazo explícito e deadline conservadora.** `createPixOrder` envia `transactions.payments[].expiration_time: "PT1H"` e grava em `mercadopago_pix_expires_at` a menor entre início da requisição + 1 h, `created_date` + 1 h e qualquer data absoluta válida da resposta; durações e valores inválidos são ignorados. Uma nova tentativa de criação usa o mesmo corpo e a mesma idempotency key. — `createPixOrder`, `computePixDeadline`. Teste: `S`. [ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)
 26. **O `cart_id` deixa de ser credencial depois da conclusão:** `GET /store/mercadopago/carts/:id/pix` responde 410 sem corpo quando o cart tem `completed_at`, sem ler a session nem chamar o Mercado Pago. — `carts/[id]/pix/route.ts`. Teste: `CX`. [ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)
 
 ## Exposição de dados ao storefront
 
-14. **O storefront recebe apenas DTOs** (`toPixPaymentDto`, `toPixDto` da rota de orders): nunca `session.data` completo, payer, identificação ou idempotency keys. `toPixPaymentDto` devolve só `status`, `charge_ref` (hash opaco), QR, copia e cola, ticket e `expires_at`: nunca IDs nem status nativos do Mercado Pago. A rota de orders, acessível só com o ID do pedido, devolve apenas `status` e `ticket_url`, e só para uma session Pix (`payment_method_id === "pix"`); pedido de cartão ou sem session Pix → 404. — Testes: `OX`, `CX`.
+14. **O storefront recebe apenas DTOs** (`toPixPaymentDto`, `toPixAccessDto`): nunca `session.data` completo, payer, identificação ou idempotency keys. `toPixPaymentDto` devolve só `status`, `charge_ref` (hash opaco), QR, copia e cola, ticket e `expires_at`: nunca IDs nem status nativos do Mercado Pago. Não existe rota Pix acessível só com o ID do pedido (a antiga `orders/:id/pix` foi removida). — Testes: `CX`, `V`, `PAX`.
 24. **A Store API genérica nunca devolve o `data` do provider Mercado Pago.** Nas respostas de `/store/carts*`, `/store/payment-collections*` e `/store/orders*`, todo `payment_sessions[].data` e `payments[].data` do Mercado Pago, em qualquer profundidade e também com `?fields=`, sai reduzido a `{ payment_method_id }`. Um item sem `provider_id` é reconhecido pelas chaves `mercadopago_*`. O armazenamento não muda, e outros providers não são tocados. — `api/middlewares.ts`, `api/utils/redact-mercadopago-data.ts`. Teste: `R`. [ADR-006](../decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md)
-15. **Respostas de estado Pix usam `Cache-Control: no-store`.** — rotas `prepare`, `carts/[id]/pix`, `orders/[id]/pix`. Testes: `PX`, `CX`, `OX` (os três fazem referência ao header).
+15. **Respostas de estado Pix usam `Cache-Control: no-store`.** — rotas `prepare`, `carts/[id]/pix`, `payment-access/pix`. Testes: `PX`, `CX`, `PAX`.
 
 ## Capability de pagamento (`paymentAccess`)
 

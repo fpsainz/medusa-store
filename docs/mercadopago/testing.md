@@ -21,7 +21,6 @@ Resultado em 2026-09-27, commit `3a56150`: **6 suítes, 141 testes, todos passan
 | `modules/mercadopago/__tests__/pix-access-view.unit.spec.ts` | `toPixAccessDto` por estado e deadline |
 | `modules/payment-access/__tests__/*.unit.spec.ts` | Token opaco, hash, validação, limite por session, corrida de emissões, revogação |
 | `workflows/payment-access/__tests__/pix-access-binding.unit.spec.ts` | Condições de emissão da capability Pix |
-| `api/store/mercadopago/orders/[id]/pix/__tests__/route.unit.spec.ts` | DTO mínimo (`status` + `ticket_url`), ausência de QR/payer/dados internos, escolha da session Pix, 404 para cartão e outros providers |
 
 ### Sem cobertura
 

@@ -34,7 +34,6 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 | `apps/backend/src/api/store/mercadopago/payment-sessions/[id]/route.ts` | Grava dados do Brick na session (allowlist). |
 | `apps/backend/src/api/store/mercadopago/payment-sessions/[id]/pix/route.ts` | Prepara/regenera a cobrança Pix. |
 | `apps/backend/src/api/store/mercadopago/carts/[id]/pix/route.ts` | Estado da cobrança Pix do cart (polling). |
-| `apps/backend/src/api/store/mercadopago/orders/[id]/pix/route.ts` | Dados Pix do pedido. |
 | `apps/backend/src/workflows/payment-access/` | Emissão (`issuePixPaymentAccessWorkflow`, regra em `pix-access-binding.ts`) e revogação (`revokePaymentSessionAccessWorkflow`) da capability Pix. |
 | `apps/backend/src/api/utils/pix-payment-access.ts` | Anexa a capability emitida aos headers da resposta do prepare. |
 | `apps/backend/src/api/store/mercadopago/payment-access/pix/route.ts` | Leitura do Pix autorizada pela capability. |
@@ -128,7 +127,6 @@ Todos os campos acima continuam gravados, porque têm consumidor no backend: pro
 |---|---|
 | Store API genérica (`/store/carts*`, `/store/payment-collections*`, `/store/orders*`) | `data` de sessions e payments do Mercado Pago reduzido a `{ payment_method_id }` (invariante 24, [ADR-006](../decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md)). A Review usa esse campo para detectar Pix. |
 | `GET /store/mercadopago/carts/:id/pix` | Cart aberto: DTO `toPixPaymentDto` com `status` (display), `charge_ref`, QR, copia e cola, ticket e `expires_at`. `charge_ref` é uma referência opaca da cobrança atual (hash truncado, não é ID do Mercado Pago); o painel a usa para abrir o QR uma vez por cobrança. Cart concluído: 410 sem corpo. |
-| `GET /store/mercadopago/orders/:id/pix` | **Sem consumidor** desde a troca da confirmação para a capability; removida depois da validação ([ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)). DTO da página do pedido: só `status` (da session) e `ticket_url`, e só quando o pedido tem uma session Pix (`payment_method_id === "pix"`); nos outros casos, 404. Sem QR, copia e cola nem expiração: a página do pedido só informa o resultado. |
 | `POST /store/mercadopago/payment-sessions/:id/pix` | Mesmo DTO da rota do cart. A capability Pix vai só nos headers de resposta. |
 | `GET /store/mercadopago/payment-access/pix` | Autorizada só pela capability no header `x-payment-access-token` (nunca query string); o cliente não informa `order_id` nem session. DTO `toPixAccessDto`: pendente e antes da deadline → `status`, `order_id`, `charge_ref`, QR, copia e cola, ticket, `expires_at`; pago, final ou depois da deadline → só `status` e `order_id`. Qualquer falha → o mesmo 404 genérico. `order_id` serve só para o Next Server conferir o pedido da página. |
 
