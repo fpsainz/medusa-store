@@ -1,6 +1,6 @@
 # ADR-005: Tipo do cartão vem do Payment Brick (`payment_type_id`)
 
-> Status: aceito · Data: 2026-09-27 · Commits: (não commitado; sobre `0326748`) · Investigação: [INV-001](../investigations/INV-001-debit-card-sent-as-credit-card.md)
+> Status: aceito · Data: 2026-09-27 · Commits: `3a56150` · Investigação: [INV-001](../investigations/INV-001-debit-card-sent-as-credit-card.md)
 
 ## Contexto
 

@@ -15,13 +15,13 @@ Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 
 
 ## Matriz de evidências
 
-"Teste unitário" = specs do backend (141 testes passando em 2026-09-27). "E2E real" = checkout real em sandbox; os números são pedidos Medusa. O E2E Pix #75–#78 foi executado **antes** do hardening do webhook (`0326748`) [decisão humana 2026-09-27]; #79 em diante, depois.
+"Teste unitário" = specs do backend (157 testes passando em 2026-09-27, com a correção do ADR-006). "E2E real" = checkout real em sandbox; os números são pedidos Medusa. O E2E Pix #75–#78 foi executado **antes** do hardening do webhook (`0326748`) [decisão humana 2026-09-27]; #79 em diante, depois.
 
 | Área | Implementado | Teste unitário | E2E real | Estado |
 |---|---|---|---|---|
 | Pix preparado na Review | ✅ | ✅ | ✅ | Validado |
 | QR / copia e cola | ✅ | ✅ | ✅ | Validado |
-| A — Pix pendente → Place order | ✅ | ✅ | ✅ #75, #78 (antes); #81, #82, #84 (depois) | Validado |
+| A — Pix pendente → Place order | ✅ | ✅ | ✅ #75, #78 (antes); #81, #82, #84, #86 (depois) | Validado |
 | B — Place order → webhook depois | ✅ | ✅ | ✅ #76 (antes); ⚠ depois: Pix do checkout não é aprovável no sandbox | Validado só antes do hardening |
 | B' — webhook (pago) → usuário na Review → Place order | ✅ | ✅ | ⚠ | E2E isolado pendente |
 | C — Pix pago → webhook → aba fechada, sem Place order | ✅ | parcial¹ | ✅ #77 (antes); ✅ #83 (depois, webhook real) | Validado |
@@ -102,6 +102,24 @@ Débito          — o cartão oficial "Elo Débito" é classificado como prepai
 
 Runtime do Brick: `paymentType`, `selectedPaymentMethod` e `additionalData.paymentTypeId` = `"credit_card"` (snake_case; os tipos do `sdk-react` 1.0.7 dizem `'creditCard'`).
 
+### Regressão depois do ADR-006 (2026-09-27)
+
+```text
+Cartão (guest, crédito) — Brick → session → Place order → authorizePayment → Order #85   ✅
+     session authorized · credit_card/visa · Payment capturado · webhook 200
+     card_token e payer continuam em session.data e payment.data [banco 2026-09-27]
+     GET /store/carts/:id desse cart → data: { payment_method_id }
+Pix (guest) — Review detecta Pix e mostra o QR                                   ✅
+     cart_01M3HSEWDKY0BJV5P2TPFHQ3CG · QR exibido na tela [decisão humana 2026-09-27]
+     log: POST .../payment-sessions/:id/pix (prepare) e polling GET /store/mercadopago/carts/:id/pix,
+          só chamados pelo PixPaymentPanel, que a Review só mostra com data.payment_method_id === "pix"
+     session pending, payment_method_id pix; payer e QR continuam em session.data [banco 2026-09-27]
+     GET /store/carts/:id → data: { payment_method_id } · DTO Pix do cart com QR/ticket/status
+Pix — Place order depois da correção (cenário A)                                 ✅ #86
+     mesmo cart: item removido → session apagada e cobrança Pix cancelada (deletePayment) →
+     webhook order.canceled 200 "not held" → nova session Pix → nova cobrança → Place order
+     session pending_authorization com a cobrança nova; 0 Payments; página do pedido leu o DTO Pix
+```
 
 ## Comportamentos validados
 
@@ -110,6 +128,7 @@ Runtime do Brick: `paymentType`, `selectedPaymentMethod` e `additionalData.payme
 - **Hardening do webhook** (`0326748`): a correlação passou a ser `data.id` → `GET /v1/orders/{data.id}` → `mercadopago_order_id` → Payment Session exata → cart → evento → `processPaymentWorkflow`. ✅ Correlação validada por teste unitário. ✅ Correlação validada por webhook real (2026-09-27, [evidência](#webhook-real-depois-do-hardening-2026-09-27-código-3a56150)).
 - Migração de identidade do provider concluída [banco 2026-09-25] (resultado em [runbooks/provider-id-migration.md](runbooks/provider-id-migration.md)).
 - Em 2026-09-27, no commit `3a56150`: 141 testes unitários passando (6 suítes); `tsc --noEmit` limpo no backend e no storefront; `medusa build` e `next build` passando.
+- Em 2026-09-27, com a correção do ADR-006: 157 testes (7 suítes), `tsc` nos dois apps, `medusa build`, `next build` e `git diff --check` passando. O lint do backend mostra os mesmos 2 warnings de antes.
 - Lint, executado pela primeira vez em 2026-09-27, sem baseline anterior: no backend, 0 erros e 2 warnings (`updatePaymentSession` chamado direto em rota; ver dívida "lógica fora de workflows"); no storefront, 12 erros e 3 warnings, todos em código que não foi alterado nesta etapa (`no-explicit-any`, `no-unused-vars`, `ban-ts-comment`, `exhaustive-deps`). Não corrigidos.
 
 ## Pendências funcionais (por prioridade)
@@ -146,12 +165,12 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 12. ⚠ `retrievePayment`/`getPaymentStatus` em um Payment anterior à migração de identidade.
 13. ⚠ Mercado Pago disponível no Admin para a região Brasil (no banco, a região aponta para `pp_mercadopago` [banco 2026-09-25]; no Admin, não verificado).
 
-### Segurança (prioridade ainda não definida)
+### Segurança
 
-- 🔍 **Exposição de `session.data` pela API genérica de carrinho.**
-  - Os campos padrão da Store API de carrinho no Medusa 2.20.1 (`defaultStoreCartFields`) incluem `*payment_collection.payment_sessions`, isto é, a session inteira com `data`.
-  - Pelo que o provider e a rota de update gravam, `data` pode conter: `payer.email`, identificação/CPF (cartão), `card_token`, `issuer_id`, `installments`, idempotency keys internas, `mercadopago_order_id`, IDs de payment, dados de status e dados Pix.
-  - Solução pretendida: no futuro, impedir a exposição de `session.data` inteiro e fazer o storefront consumir apenas DTOs específicos [decisão humana 2026-09-27]. Não implementado.
+- ✅ **Exposição de `session.data` pela Store API: corrigida ([ADR-006](decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md), invariante 24).**
+  - **Antes** (comprovado na API em execução em 2026-09-27, só com a publishable key e o ID, sem login): `GET /store/carts/:id` devolvia `data` inteiro das sessions do Mercado Pago, com `card_token`, `payer` (e-mail e CPF), `issuer_id`, `installments`, idempotency keys, `mercadopago_order_id`/`payment_id`, status internos, QR/ticket e geração Pix. Isso valia também para carts completos. Com `?fields=`, o mesmo saía em `payments[].data` do cart e em `GET /store/orders/:id` de pedido guest.
+  - **Depois** (mesma verificação): em todos esses caminhos, inclusive `?fields=` sem `provider_id`, sai só `data: { payment_method_id }`. O armazenamento não mudou (`session.data` e `payment.data` completos [banco 2026-09-27]).
+  - 🔍 Continua aberto: `GET /store/mercadopago/orders/:id/pix` (pendência 4).
 
 ## Dívida técnica
 

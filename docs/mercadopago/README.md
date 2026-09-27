@@ -112,3 +112,17 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 - **Escritos apenas pelo provider:** todos os `mercadopago_*`, por exemplo `mercadopago_order_id`, `mercadopago_payment_id`, status e detalhes, `mercadopago_external_reference`, `mercadopago_idempotency_key`, `mercadopago_pix_*` (QR, ticket, expiração, idempotency key, geração).
 - **Transitório, nunca persistido:** `mercadopago_pix_action`.
 - A lista de campos da Order Pix atual está em `PIX_ORDER_FIELDS` (`service.ts`).
+- O Payment criado a partir da session guarda uma cópia desses campos em `payment.data`.
+
+### Interno × público
+
+Todos os campos acima continuam gravados, porque têm consumidor no backend: provider, webhook ou rotas `/store/mercadopago/*`. O que chega ao storefront é separado assim:
+
+| Caminho | O storefront recebe |
+|---|---|
+| Store API genérica (`/store/carts*`, `/store/payment-collections*`, `/store/orders*`) | `data` de sessions e payments do Mercado Pago reduzido a `{ payment_method_id }` (invariante 24, [ADR-006](../decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md)). A Review usa esse campo para detectar Pix. |
+| `GET /store/mercadopago/carts/:id/pix` | DTO `toPixPaymentDto`: status (display, session, Order, payment), QR, copia e cola, ticket, expiração e `mercadopago_order_id` (o painel Pix o usa para abrir o QR uma vez por cobrança). |
+| `GET /store/mercadopago/orders/:id/pix` | DTO da página do pedido: status, QR, ticket e expiração. |
+| `POST /store/mercadopago/payment-sessions/:id/pix` | Mesmo DTO da rota do cart. |
+
+Nunca saem para o storefront: `card_token`, `issuer_id`, `installments`, `payer`, idempotency keys, `mercadopago_payment_id`, `mercadopago_external_reference`, geração Pix nem status internos fora dos DTOs.
