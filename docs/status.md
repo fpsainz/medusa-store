@@ -1,16 +1,16 @@
 # Status do projeto
 
-> Status: vigente · Última verificação: 2026-09-27 · Commit: `c6beff1` · Branch: `rebuild/mercadopago-pix-storefront`
+> Status: vigente · Última verificação: 2026-09-27 · Commit: `4de8ace` · Branch: `rebuild/mercadopago-pix-storefront`
 
 Retrato atual. Atualizar ao fim de cada etapa relevante. Histórico fica no Git, não aqui. Marcadores de origem: [README.md](README.md#convenções).
 
-**Próxima sessão começa por:** decidir como validar Pix pago pelo checkout no sandbox (ver [limitação do sandbox](mercadopago/testing.md#pix-no-sandbox)) → cenários B e B' depois do hardening. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
+**Próxima sessão começa por:** autorização para aplicar a migration do `paymentAccess` → E2E sandbox da capability Pix (roteiro na seção "Capability de pagamento") → remoção de `orders/:id/pix`. Depois: decidir como validar Pix pago pelo checkout no sandbox (ver [limitação do sandbox](mercadopago/testing.md#pix-no-sandbox)) → cenários B e B' depois do hardening. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
 
 Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 🔍 investigação aberta · 🛠 dívida técnica · ❌ não existe · — sem registro
 
 ## Git
 
-- Branch atual `rebuild/mercadopago-pix-storefront`. Este status cobre as alterações até o commit `c6beff1`. Commits posteriores só de documentação ficam registrados no histórico do Git (`git log main..HEAD`). Commits relevantes sobre a `main`: `81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001, `01991a0` documentação do E2E do webhook, `c6beff1` redação do `data` do Mercado Pago na Store API. O Pix não está na `main`.
+- Branch atual `rebuild/mercadopago-pix-storefront`. Este status cobre as alterações até o commit `4de8ace`. Commits posteriores só de documentação ficam registrados no histórico do Git (`git log main..HEAD`). Commits relevantes sobre a `main`: `81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001, `01991a0` documentação do E2E do webhook, `c6beff1` redação do `data` do Mercado Pago na Store API, `1749309` resposta mínima de `orders/:id/pix`, `780b740` prazo explícito do Pix, `87587f6` `carts/:id/pix` fechado após a conclusão, `86b8ed0` módulo `paymentAccess`, `93abe1f` emissão/revogação da capability, `d5a4b23` leitura por capability, `9884ba5` cookie no storefront, `4de8ace` confirmação por capability. O Pix não está na `main`.
 - Existe a branch local `recovery/base-81f5caf`, que aponta para `81f5caf`.
 
 ## Matriz de evidências
@@ -183,7 +183,10 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 - ✅ `GET /store/mercadopago/payment-access/pix`: leitura autorizada pela capability, DTO por estado e deadline, falha genérica. Testes unitários; ⚠ consulta reversa collection → order (`order.id`) ainda não executada contra o banco.
 - ✅ Storefront: capability do prepare gravada em cookie HttpOnly; Server Action devolve só o DTO permitido; leitura server-only por `fetch` nativo. Teste da fronteira (`node --test`); cookie e Server Action sem teste automatizado.
 - ✅ Confirmação do pedido usa a capability (comparação com o `order_id` da URL, polling por Server Action, apresentação do Pix compartilhada com a Review). `tsc`, lint e `next build`; sem teste automatizado de componente. `orders/:id/pix` ficou sem consumidor.
-- ⚠ **Migration `Migration20260927120000` não aplicada**: exige autorização explícita. Até lá, qualquer uso do módulo falha em execução.
+- ⚠ **Migration `Migration20260927120000` não aplicada**: exige autorização explícita. **Até lá, com o código em `4de8ace`:** a emissão falha de forma controlada (o prepare do Pix continua funcionando, sem capability) e a página de confirmação **não mostra dados Pix**.
+- Validação automatizada em 2026-09-27, código em `4de8ace`: backend 12 suítes / 233 testes, `tsc` e `medusa build` OK, lint 0 erros / 2 warnings (mesmos de antes); storefront `pnpm test` 6/6, `tsc` e `next build` OK, lint 12 erros / 3 warnings (mesmos de antes, nenhum nos arquivos novos). Não existem testes de integração HTTP; os de módulo (`test:integration:modules`) criam bancos no servidor configurado e não foram executados.
+- ⚠ **E2E sandbox da capability: não executado** (bloqueado pela migration e requer navegador). Roteiro: (1) guest Pix; (2) cliente autenticado; (3) outro browser sem cookie; (4) Pix → cartão antes da conclusão; (5) cart concluído (410 na Review); (6) confirmação do pedido; (7) QR/ticket enquanto pendente; (8) status posterior; (9) comportamento depois da deadline (1 h + 15 min). Pix pago continua **não aprovável** no sandbox pelo checkout ([testing.md](mercadopago/testing.md#pix-no-sandbox)), então "aprovado" só está coberto por testes automatizados.
+- ⚠ A consulta reversa collection → order (`order.id`) da rota de capability só foi validada por mock.
 
 ## Dívida técnica
 
