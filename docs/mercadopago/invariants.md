@@ -13,7 +13,9 @@ Specs (caminhos relativos a `apps/backend/src/`):
 `OX` = `.../orders/[id]/pix/__tests__/route.unit.spec.ts` ·
 `R` = `api/utils/__tests__/redact-mercadopago-data.unit.spec.ts` ·
 `PA` = `modules/payment-access/__tests__/*.unit.spec.ts` ·
-`WB` = `workflows/payment-access/__tests__/pix-access-binding.unit.spec.ts`
+`WB` = `workflows/payment-access/__tests__/pix-access-binding.unit.spec.ts` ·
+`PAX` = `api/store/mercadopago/payment-access/pix/__tests__/route.unit.spec.ts` ·
+`V` = `modules/mercadopago/__tests__/pix-access-view.unit.spec.ts`
 
 ## Identidade
 
@@ -53,6 +55,9 @@ Specs (caminhos relativos a `apps/backend/src/`):
 30. **A capability Pix só é emitida pelo prepare, a partir da posse do `cart_id` com o cart aberto.** O workflow relê cart e session e só emite quando: cart existe e não tem `completed_at`; a session pertence ao payment collection do cart, é `pp_mercadopago` e Pix, e já tem cobrança; há `mercadopago_pix_expires_at`; e deadline + 15 min ainda está no futuro. Expira em deadline + 15 min. Não existe rota pública de emissão. — `pix-access-binding.ts`, `issuePixPaymentAccessWorkflow`, `payment-sessions/[id]/pix/route.ts`. Testes: `WB`, `PX`.
 31. **O token nunca vai no corpo da resposta:** só nos headers `x-payment-access-token`/`x-payment-access-expires-at`. Falha na emissão não falha o prepare. — `api/utils/pix-payment-access.ts`. Teste: `PX`.
 32. **Trocar a session de Pix para outro método revoga as capabilities dela** (`payment_method_changed`). Falha na revogação é registrada e não falha a atualização. — `payment-sessions/[id]/route.ts`, `revokePaymentSessionAccessWorkflow`. Teste: `PS`.
+33. **A leitura do Pix por capability não aceita identificadores do cliente.** Token só no header `x-payment-access-token` (valor único), nunca na query string. Session, collection e order vêm da capability e são revalidados: session existe, é `pp_mercadopago`, está na mesma collection, é Pix e tem cobrança. Qualquer falha (token ausente, desconhecido, expirado, revogado, de outro propósito, provider/método diferente, session inexistente ou alterada) → o mesmo 404 `Payment not found.`. — `payment-access/pix/route.ts`. Teste: `PAX`.
+34. **Artefatos pagáveis só com o Pix pendente e antes da deadline.** Pago (`authorized` no Medusa ou aprovado no Mercado Pago, mesmo depois da deadline), status final ou deadline vencida/ausente → só `status` e `order_id`. Nunca `data`, payer, e-mail, CPF, card token, idempotency keys, IDs do Mercado Pago, IDs de session/collection/cart/grant nem o access token. — `toPixAccessDto`. Testes: `V`, `PAX`.
+35. **A leitura por capability usa `Cache-Control: no-store` e `Referrer-Policy: no-referrer`.** — `payment-access/pix/route.ts`. Teste: `PAX`.
 
 ## Webhook
 
