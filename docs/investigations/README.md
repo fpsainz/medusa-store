@@ -18,6 +18,7 @@ Regras:
 | ID | Tema | Status |
 |---|---|---|
 | [INV-001](INV-001-debit-card-sent-as-credit-card.md) | Débito enviado à Orders API como `credit_card` | aberta |
+| [INV-002](INV-002-store-order-retrieve-without-auth.md) | `GET /store/orders/:id` devolve dados do comprador a quem tem o ID | aberta |
 
 Modelo:
 

@@ -171,7 +171,9 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 - ✅ **Exposição de `session.data` pela Store API: corrigida ([ADR-006](decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md), invariante 24).**
   - **Antes** (comprovado na API em execução em 2026-09-27, só com a publishable key e o ID, sem login): `GET /store/carts/:id` devolvia `data` inteiro das sessions do Mercado Pago, com `card_token`, `payer` (e-mail e CPF), `issuer_id`, `installments`, idempotency keys, `mercadopago_order_id`/`payment_id`, status internos, QR/ticket e geração Pix. Isso valia também para carts completos. Com `?fields=`, o mesmo saía em `payments[].data` do cart e em `GET /store/orders/:id` de pedido guest.
   - **Depois** (mesma verificação): em todos esses caminhos, inclusive `?fields=` sem `provider_id`, sai só `data: { payment_method_id }`. O armazenamento não mudou (`session.data` e `payment.data` completos [banco 2026-09-27]).
-  - ✅ `GET /store/mercadopago/orders/:id/pix` reduzida a `status` + `ticket_url` (pendência 4).
+  - ✅ `GET /store/mercadopago/orders/:id/pix` reduzida a `status` + `ticket_url` (pendência 4). Etapa intermediária: a substituição por uma capability temporária está proposta no [ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md).
+- 🔍 **`GET /store/orders/:id` do core devolve e-mail e endereços a quem tem o ID do pedido** ([INV-002](investigations/INV-002-store-order-retrieve-without-auth.md)). Verificado no código do `@medusajs/medusa` 2.20.1; não verificado em requisição real.
+- 🔍 `GET /store/mercadopago/carts/:id/pix` responde mesmo depois de `completed_at` e devolve `mercadopago_order_id` e status nativos (correção prevista no [ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md)).
 
 ## Dívida técnica
 
