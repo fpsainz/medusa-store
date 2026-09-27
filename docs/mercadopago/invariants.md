@@ -1,6 +1,6 @@
 # Invariantes do Mercado Pago
 
-> Status: vigente · Última verificação: 2026-09-25 · Commit: `0326748`
+> Status: vigente · Última verificação: 2026-09-27 · Commit: `c6beff1`
 
 Regras que o código atual garante e que **não podem ser quebradas** sem uma decisão explícita (novo ADR). Cada regra indica onde é garantida e qual spec a cobre. "Sem teste" significa que a regra está no código, mas nenhum teste a protege.
 

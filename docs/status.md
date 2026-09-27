@@ -1,6 +1,6 @@
 # Status do projeto
 
-> Status: vigente · Última verificação: 2026-09-27 · Commit: `3a56150` · Branch: `rebuild/mercadopago-pix-storefront`
+> Status: vigente · Última verificação: 2026-09-27 · Commit: `c6beff1` · Branch: `rebuild/mercadopago-pix-storefront`
 
 Retrato atual. Atualizar ao fim de cada etapa relevante. Histórico fica no Git, não aqui. Marcadores de origem: [README.md](README.md#convenções).
 
@@ -10,7 +10,7 @@ Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 
 
 ## Git
 
-- Branch atual `rebuild/mercadopago-pix-storefront`, **4 commits à frente da `main`** (`81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001). O Pix não está na `main`.
+- Branch atual `rebuild/mercadopago-pix-storefront`, **6 commits à frente da `main`** (`81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001, `01991a0` documentação do E2E do webhook, `c6beff1` redação do `data` do Mercado Pago na Store API). O Pix não está na `main`.
 - Existe a branch local `recovery/base-81f5caf`, que aponta para `81f5caf`.
 
 ## Matriz de evidências

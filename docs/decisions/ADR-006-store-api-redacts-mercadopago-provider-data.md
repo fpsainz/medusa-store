@@ -1,6 +1,6 @@
 # ADR-006: Store API não expõe `data` do provider Mercado Pago
 
-> Status: aceito · Data: 2026-09-27 · Commits: o commit que introduz este ADR (sobre `01991a0`)
+> Status: aceito · Data: 2026-09-27 · Commits: `c6beff1`
 
 ## Contexto
 

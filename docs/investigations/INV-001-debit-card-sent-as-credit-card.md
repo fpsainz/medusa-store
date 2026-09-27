@@ -1,6 +1,6 @@
 # INV-001: Débito enviado à Orders API como `credit_card`
 
-> Status: causa confirmada · correção implementada (seção 11, [ADR-005](../decisions/ADR-005-card-payment-type-from-brick.md); não commitada) · crédito validado · débito não validável no sandbox · Aberta em: 2026-09-25 · Commit: `0326748`
+> Status: causa confirmada · correção implementada (seção 11, [ADR-005](../decisions/ADR-005-card-payment-type-from-brick.md); commitada em `3a56150`) · crédito validado · débito não validável no sandbox · Aberta em: 2026-09-25 · Commit: `0326748`
 
 ## Achado
 
