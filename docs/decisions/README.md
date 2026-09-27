@@ -15,6 +15,7 @@ Só viram ADR decisões com evidência no código ou no Git. O que não foi deci
 | [ADR-005](ADR-005-card-payment-type-from-brick.md) | Tipo do cartão vem do Payment Brick (`payment_type_id`) | Aceito | 2026-09-27 |
 | [ADR-006](ADR-006-store-api-redacts-mercadopago-provider-data.md) | Store API não expõe `data` do provider Mercado Pago | Aceito | 2026-09-27 |
 | [ADR-007](ADR-007-payment-access-capability-for-pix.md) | Capability temporária (`payment_access`) para acompanhar o Pix depois do checkout | Aceito | 2026-09-27 |
+| [ADR-008](ADR-008-pix-payment-window-hides-artifacts.md) | Fim da janela de pagamento do Pix esconde QR/ticket sem mudar o status do provider | Aceito | 2026-09-27 |
 
 As datas são as dos commits em que a decisão entrou no código.
 
