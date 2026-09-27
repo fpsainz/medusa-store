@@ -1,16 +1,16 @@
 # Status do projeto
 
-> Status: vigente · Última verificação: 2026-09-27 · Commit: `4de8ace` · Branch: `rebuild/mercadopago-pix-storefront`
+> Status: vigente · Última verificação: 2026-09-27 · Commit: `f2ceb7c` · Branch: `rebuild/mercadopago-pix-storefront`
 
 Retrato atual. Atualizar ao fim de cada etapa relevante. Histórico fica no Git, não aqui. Marcadores de origem: [README.md](README.md#convenções).
 
-**Próxima sessão começa por:** autorização para aplicar a migration do `paymentAccess` → E2E sandbox da capability Pix (roteiro na seção "Capability de pagamento") → remoção de `orders/:id/pix`. Depois: decidir como validar Pix pago pelo checkout no sandbox (ver [limitação do sandbox](mercadopago/testing.md#pix-no-sandbox)) → cenários B e B' depois do hardening. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
+**Próxima sessão começa por:** verificação no navegador do que o E2E HTTP não cobre (seção "Capability de pagamento"). Depois: decidir como validar Pix pago pelo checkout no sandbox (ver [limitação do sandbox](mercadopago/testing.md#pix-no-sandbox)) → cenários B e B' depois do hardening. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
 
 Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 🔍 investigação aberta · 🛠 dívida técnica · ❌ não existe · — sem registro
 
 ## Git
 
-- Branch atual `rebuild/mercadopago-pix-storefront`. Este status cobre as alterações até o commit `4de8ace`. Commits posteriores só de documentação ficam registrados no histórico do Git (`git log main..HEAD`). Commits relevantes sobre a `main`: `81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001, `01991a0` documentação do E2E do webhook, `c6beff1` redação do `data` do Mercado Pago na Store API, `1749309` resposta mínima de `orders/:id/pix`, `780b740` prazo explícito do Pix, `87587f6` `carts/:id/pix` fechado após a conclusão, `86b8ed0` módulo `paymentAccess`, `93abe1f` emissão/revogação da capability, `d5a4b23` leitura por capability, `9884ba5` cookie no storefront, `4de8ace` confirmação por capability. O Pix não está na `main`.
+- Branch atual `rebuild/mercadopago-pix-storefront`. Este status cobre as alterações até o commit `f2ceb7c`. Commits posteriores só de documentação ficam registrados no histórico do Git (`git log main..HEAD`). Commits relevantes sobre a `main`: `81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001, `01991a0` documentação do E2E do webhook, `c6beff1` redação do `data` do Mercado Pago na Store API, `1749309` resposta mínima de `orders/:id/pix`, `780b740` prazo explícito do Pix, `87587f6` `carts/:id/pix` fechado após a conclusão, `86b8ed0` módulo `paymentAccess`, `93abe1f` emissão/revogação da capability, `d5a4b23` leitura por capability, `9884ba5` cookie no storefront, `4de8ace` confirmação por capability, `f2ceb7c` correção do `next dev`. O Pix não está na `main`.
 - Existe a branch local `recovery/base-81f5caf`, que aponta para `81f5caf`.
 
 ## Matriz de evidências
@@ -175,18 +175,52 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 - 🔍 **`GET /store/orders/:id` do core devolve e-mail e endereços a quem tem o ID do pedido** ([INV-002](investigations/INV-002-store-order-retrieve-without-auth.md)). Verificado no código do `@medusajs/medusa` 2.20.1; não verificado em requisição real.
 - ✅ `GET /store/mercadopago/carts/:id/pix` responde 410 sem corpo depois de `completed_at`, e o DTO Pix (também o do prepare) não traz mais `mercadopago_order_id`, `session_status` nem status nativos (invariantes 14 e 26). Validado por testes unitários; ⚠ não reexecutado em E2E.
 
-### Capability de pagamento ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md), em implementação)
+### Capability de pagamento ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md))
 
-- ✅ Pix com `expiration_time: "PT1H"` e deadline conservadora (`780b740`). Testes unitários; ⚠ não observado no sandbox.
-- ✅ Módulo `paymentAccess` (token opaco, só hash, validação, limite de 3 por session, revogação). Testes unitários.
-- ✅ Emissão da capability no prepare (workflow, header de resposta) e revogação na troca de Pix para outro método. Testes unitários.
-- ✅ `GET /store/mercadopago/payment-access/pix`: leitura autorizada pela capability, DTO por estado e deadline, falha genérica. Testes unitários; ⚠ consulta reversa collection → order (`order.id`) ainda não executada contra o banco.
-- ✅ Storefront: capability do prepare gravada em cookie HttpOnly; Server Action devolve só o DTO permitido; leitura server-only por `fetch` nativo. Teste da fronteira (`node --test`); cookie e Server Action sem teste automatizado.
-- ✅ Confirmação do pedido usa a capability (comparação com o `order_id` da URL, polling por Server Action, apresentação do Pix compartilhada com a Review). `tsc`, lint e `next build`; sem teste automatizado de componente. `orders/:id/pix` ficou sem consumidor.
-- ⚠ **Migration `Migration20260927120000` não aplicada**: exige autorização explícita. **Até lá, com o código em `4de8ace`:** a emissão falha de forma controlada (o prepare do Pix continua funcionando, sem capability) e a página de confirmação **não mostra dados Pix**.
-- Validação automatizada em 2026-09-27, código em `4de8ace`: backend 12 suítes / 233 testes, `tsc` e `medusa build` OK, lint 0 erros / 2 warnings (mesmos de antes); storefront `pnpm test` 6/6, `tsc` e `next build` OK, lint 12 erros / 3 warnings (mesmos de antes, nenhum nos arquivos novos). Não existem testes de integração HTTP; os de módulo (`test:integration:modules`) criam bancos no servidor configurado e não foram executados.
-- ⚠ **E2E sandbox da capability: não executado** (bloqueado pela migration e requer navegador). Roteiro: (1) guest Pix; (2) cliente autenticado; (3) outro browser sem cookie; (4) Pix → cartão antes da conclusão; (5) cart concluído (410 na Review); (6) confirmação do pedido; (7) QR/ticket enquanto pendente; (8) status posterior; (9) comportamento depois da deadline (1 h + 15 min). Pix pago continua **não aprovável** no sandbox pelo checkout ([testing.md](mercadopago/testing.md#pix-no-sandbox)), então "aprovado" só está coberto por testes automatizados.
-- ⚠ A consulta reversa collection → order (`order.id`) da rota de capability só foi validada por mock.
+Implementação: `780b740`, `87587f6`, `86b8ed0`, `93abe1f`, `d5a4b23`, `9884ba5`, `4de8ace`, `f2ceb7c`.
+
+- ✅ **Migration `Migration20260927120000` aplicada** em 2026-09-27, sozinha (`ModulesSdkUtils.buildMigrationScript` apontado só para a pasta de migrations do `paymentAccess`). Tabela `payment_access_grant` com 14 colunas, PK, `CHECK (purpose = 'pix_payment_view')` e os índices `deleted_at`, `token_hash` (único), `payment_session_id`, `expires_at`; nenhuma outra migration registrada na última hora [banco 2026-09-27].
+- ✅ Validação automatizada (código em `f2ceb7c`): backend 12 suítes / 233 testes, `tsc`, `medusa build`; storefront `pnpm test` 6/6, `tsc`; lint nos mesmos números de antes. Não há testes de integração HTTP; os de módulo criam bancos e não foram executados.
+- 🐞 **Corrigido durante o E2E** (`f2ceb7c`): o re-export de tipos em `cart.ts` (`"use server"`, `9884ba5`) fazia o `next dev` (Turbopack) responder 500 em todas as páginas; o `next build` aceitava.
+
+#### E2E sandbox (2026-09-27, código em `f2ceb7c`)
+
+Fonte: roteiro HTTP contra o backend e o storefront em execução e a Orders API sandbox (Pix reais criados pelo Mercado Pago), mais consultas read-only [banco 2026-09-27]. **Não houve navegador:** o que depende de UI está separado abaixo.
+
+```text
+Guest Pix (pedido #87, order_01M3J8Y4V3DA79QAQ81QCW5HEK)                     38 checks, 37 ✅
+  prepare 200 pending com QR/ticket; capability só no header, formato pat_, fora do corpo      ✅
+  sem Access-Control-Expose-Headers                                                           ✅
+  expiração da capability = deadline (60,0 min) + 15 min                                      ✅
+  leitura: pending com QR, order_id null antes da conclusão, no-store/no-referrer, allowlist  ✅
+  carts/:id/pix 200 com cart aberto, sem campos internos                                      ✅
+  refresh reutiliza a cobrança (mesmo charge_ref) e emite nova capability; 2ª aba válida      ✅
+  4ª emissão revoga a mais antiga; #2–#4 válidas (limite de 3)                                ✅
+  404 genérico idêntico: sem token, token só na query, token desconhecido, malformado         ✅
+  complete com Pix pendente → pedido (cenário A)                                              ✅
+  carts/:id/pix → 410 sem corpo; prepare depois da conclusão → 400 sem capability             ✅
+  capability depois da conclusão → order_id = pedido criado (consulta reversa real)           ✅
+  GET /store/orders/:id → payment_sessions[].data = { payment_method_id: "pix" }              ✅
+  confirmação (RSC) com cookie mostra o Pix; sem cookie / cookie inválido → sem dados Pix     ✅
+  HTML da confirmação sem o token                                                             ❌ em next dev / ✅ em produção
+Pix → cartão (mesma session)                                                                  5 ✅
+  capability antiga → 404 genérico; carts/:id/pix → 404
+Cliente autenticado (pedido #88)                                                              10 ✅
+  cart do cliente, capability, leitura sem campos internos, pedido com Pix pendente,
+  order_id resolvido; JWT do cliente sozinho não abre a rota (404)
+Deadline (Pix PT1H)                                                                           ver abaixo
+Banco: 6 grants, todos token_hash hex de 64, nenhum plaintext; 1 superseded, 1 payment_method_changed
+```
+
+- **Token no HTML só em `next dev`:** o debug do React Server Components em desenvolvimento serializa o valor de `cookies()` no payload RSC, com **todos** os cookies HttpOnly (inclusive `_medusa_jwt` de cliente logado), não só a capability. Num build de produção (cópia isolada do storefront, sem `.env`, `next start`), com o cookie `__Host-payment_access` a página mostra o Pix e o HTML não contém o token, o nome do cookie nem IDs do Mercado Pago. Não expor `next dev` publicamente.
+- **Deadline** (probe com cart aberto e o pedido #87):
+  - 2 min depois da deadline: a capability do probe responde só `{ status: "expired" }`, sem QR, enquanto o Mercado Pago (leitura ao vivo por `carts/:id/pix`) ainda dizia **`pending`**. A deadline local conservadora escondeu o QR antes do Mercado Pago.
+  - O pedido #87 (deadline ~5 min antes) já respondia **`canceled`**, só status. O check automatizado esperava `expired` e falhou; o comportamento é o do invariante 34 (status final do Mercado Pago é mantido, sem artefatos).
+  - 16 min depois da deadline: o Mercado Pago mostrava **`canceled`** para o probe; as duas capabilities (deadline + 15 min) → 404 genérico.
+- **Estados no E2E real:** `pending` ✅; `canceled` ✅ (Pix vencido cancelado pelo Mercado Pago); `expired` só pela deadline local ✅. **`approved` e `failed` não reproduzíveis no sandbox** (Pix do checkout não é aprovável: [testing.md](mercadopago/testing.md#pix-no-sandbox)); cobertos só por testes automatizados (`V`, `PAX`).
+- ⚠ **Depende de navegador, não executado:** o Server Action gravar o cookie no browser; a Review reagir ao 410 (esconder a cobrança, liberar "Place order"); a interface da confirmação (modal, polling). Cobertos por `tsc`/lint e pelo teste da fronteira, não por E2E.
+- 🔍 `carts/:id/pix` (Review) não aplica a deadline local: por alguns minutos depois da deadline pode mostrar o QR enquanto o Mercado Pago ainda diz `pending`. Pendência separada.
+- 🔍 `POST /store/mercadopago/payment-sessions/:id` devolve `payment_session` inteiro, com `data`; `/store/mercadopago/*` não é coberto pelo ADR-006. Pendência separada.
 
 ## Dívida técnica
 

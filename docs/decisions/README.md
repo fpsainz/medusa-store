@@ -14,7 +14,7 @@ Só viram ADR decisões com evidência no código ou no Git. O que não foi deci
 | [ADR-004](ADR-004-webhook-hmac-lowercase-data-id.md) | HMAC do webhook com `data.id` em minúsculas | Aceito | 2026-09-21 |
 | [ADR-005](ADR-005-card-payment-type-from-brick.md) | Tipo do cartão vem do Payment Brick (`payment_type_id`) | Aceito | 2026-09-27 |
 | [ADR-006](ADR-006-store-api-redacts-mercadopago-provider-data.md) | Store API não expõe `data` do provider Mercado Pago | Aceito | 2026-09-27 |
-| [ADR-007](ADR-007-payment-access-capability-for-pix.md) | Capability temporária (`payment_access`) para acompanhar o Pix depois do checkout | Proposto | 2026-09-27 |
+| [ADR-007](ADR-007-payment-access-capability-for-pix.md) | Capability temporária (`payment_access`) para acompanhar o Pix depois do checkout | Aceito | 2026-09-27 |
 
 As datas são as dos commits em que a decisão entrou no código.
 

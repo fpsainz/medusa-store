@@ -58,6 +58,7 @@ Verificado no código em `3a56150` e na documentação oficial do Mercado Pago (
 - O checkout não consegue enviar `first_name`: a rota de update reduz `payer` a `email` + `identification` (`sanitizePayer`, invariante 2). O `createPixOrder` envia esse `payer` sem alteração. Por isso, **um Pix criado pelo checkout fica em `waiting_transfer` no sandbox**. Isso foi observado em 2026-09-27 com payer `@testuser.com` e `@example.com`. O domínio do e-mail não muda o resultado.
 - O "Simular" do painel de Webhooks só envia uma notificação com o `Data ID` informado; não muda o status da Order. Como o webhook lê o status em `GET /v1/orders/{id}`, simular uma Order não paga não autoriza nada.
 - Uma Order criada direto na API com `APRO` não pertence a nenhuma session. Ela serve para o teste negativo de correlação (503, sem atingir a session do cart), não para os cenários B, B' e C.
+- **Vencimento observado** (2026-09-27, Pix com `expiration_time: "PT1H"`): 2 min depois do prazo a Order ainda estava `pending` (display); entre ~2 e ~7 min depois passou a **`canceled`**. `expired` não foi observado como status da Order. Detalhes em [../status.md](../status.md#capability-de-pagamento-adr-007).
 - Como o Pix da #76 e da #77 foi aprovado continua sem explicação [não validado]. As duas foram criadas antes do commit `c41d686`, então o código que rodava naquele momento não está no Git. Nenhum código commitado envia `first_name`.
 
 ## Checklist após mudanças no provider ou no webhook
