@@ -37,7 +37,7 @@ Specs (caminhos relativos a `apps/backend/src/`):
 
 ## Exposição de dados ao storefront
 
-14. **O storefront recebe apenas DTOs** (`toPixPaymentDto`, `toPixDto` da rota de orders): nunca `session.data` completo, payer, identificação ou idempotency keys. — Testes: `OX`, `CX`.
+14. **O storefront recebe apenas DTOs** (`toPixPaymentDto`, `toPixDto` da rota de orders): nunca `session.data` completo, payer, identificação ou idempotency keys. A rota de orders, acessível só com o ID do pedido, devolve apenas `status` e `ticket_url`, e só para uma session Pix (`payment_method_id === "pix"`); pedido de cartão ou sem session Pix → 404. — Testes: `OX`, `CX`.
 24. **A Store API genérica nunca devolve o `data` do provider Mercado Pago.** Nas respostas de `/store/carts*`, `/store/payment-collections*` e `/store/orders*`, todo `payment_sessions[].data` e `payments[].data` do Mercado Pago, em qualquer profundidade e também com `?fields=`, sai reduzido a `{ payment_method_id }`. Um item sem `provider_id` é reconhecido pelas chaves `mercadopago_*`. O armazenamento não muda, e outros providers não são tocados. — `api/middlewares.ts`, `api/utils/redact-mercadopago-data.ts`. Teste: `R`. [ADR-006](../decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md)
 15. **Respostas de estado Pix usam `Cache-Control: no-store`.** — rotas `prepare`, `carts/[id]/pix`, `orders/[id]/pix`. Testes: `PX`, `CX`, `OX` (os três fazem referência ao header).
 

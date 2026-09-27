@@ -23,9 +23,8 @@ const PaymentDetails = async ({ order }: PaymentDetailsProps) => {
   // shown (QR modal, polling) on the checkout Review, before "Place order";
   // nothing here creates, prepares or polls it, and no modal opens here.
   const pixPayment = await retrievePixPayment(order.id)
-  const isPixOrder = Boolean(
-    pixPayment?.qr_code || pixPayment?.qr_code_base64 || pixPayment?.ticket_url
-  )
+  // The endpoint only answers for a Mercado Pago Pix session (404 → null).
+  const isPixOrder = pixPayment !== null
   // The payment session only becomes "authorized" once Medusa has recorded
   // the Pix as paid (webhook or completeCart); until then it is awaiting.
   const isAwaitingPix = isPixOrder && pixPayment?.status !== "authorized"

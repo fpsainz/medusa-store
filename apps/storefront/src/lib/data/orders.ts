@@ -32,20 +32,15 @@ export const retrieveOrder = async (id: string) => {
 
 export type PixPayment = {
   status: string
-  qr_code?: string
-  qr_code_base64?: string
   ticket_url?: string
-  expires_at?: string
 }
 
-// Pix QR/copy-paste/ticket_url/expiration are not part of the Order/Payment
-// the storefront otherwise fetches: while the Pix payment is
+// The Pix status and ticket_url are not part of the Order/Payment the
+// storefront otherwise fetches: while the Pix payment is
 // pending_authorization, Medusa hasn't materialized a Payment record yet,
-// only the (unsanitized) Payment Session. Rather than exposing
-// payment_sessions.data to the client (the previous, since-reverted
-// approach), this reads the allowlisted Pix DTO from a dedicated backend
-// endpoint that never returns the payer, any document/identification, the
-// idempotency key, or any other Mercado Pago internal id.
+// only the Payment Session. This reads the minimal order-page DTO from a
+// dedicated backend endpoint (status + ticket_url only: no QR code, payer,
+// document/identification, idempotency key or Mercado Pago internal id).
 //
 // Returns null, rather than throwing, when the order has no Mercado Pago
 // Pix session (e.g. it was paid by card, or with another provider) — that

@@ -148,10 +148,11 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 
 ### Média
 
-4. 🔍 **`GET /store/mercadopago/orders/:id/pix`: segurança e robustez.**
-   - `:id` é o **ID da Order Medusa** (não o da Order Mercado Pago). A rota é usada pela página de confirmação (`PaymentDetails` em `order-completed-template.tsx`), que também atende guest checkout.
-   - Hoje ela devolve os dados Pix da primeira session `pp_mercadopago` do pedido, sem checar se é Pix, para quem conhecer o ID.
-   - Abordagem pretendida: **reduzir a resposta ao mínimo necessário para a página de confirmação**, em vez de exigir autenticação e quebrar o guest checkout [decisão humana 2026-09-27]. Não implementado.
+4. ✅ **`GET /store/mercadopago/orders/:id/pix`: resposta reduzida ao mínimo** (commit `fix(api): minimize Mercado Pago Pix order response`; invariante 14).
+   - `:id` é o **ID da Order Medusa** (não o da Order Mercado Pago). A rota é usada só pela página de confirmação (`PaymentDetails` em `order-completed-template.tsx`), que também atende guest checkout.
+   - **Antes:** devolvia `status`, `qr_code`, `qr_code_base64`, `ticket_url` e `expires_at` da primeira session `pp_mercadopago` do pedido, sem checar se era Pix, para quem conhecesse o ID.
+   - **Depois:** só `status` e `ticket_url`, e só para uma session Pix; pedido de cartão → 404. A página do pedido trata qualquer resposta não 404 como Pix. Acesso inalterado, conforme a decisão de não exigir autenticação [decisão humana 2026-09-27].
+   - ✅ Testes unitários (`OX`, 10 testes; 162 no total), `tsc` nos dois apps. ⚠ Página do pedido não reexecutada em E2E depois da mudança.
 5. 🔍 **`PaymentButton` escolhe o botão por `payment_sessions[0]`.** Pergunta: a ordem de `payment_sessions` é garantida pelo Medusa neste fluxo, ou o código assume uma posição arbitrária? Não classificar como bug antes de verificar a garantia do framework.
 
 ### Baixa
@@ -170,7 +171,7 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 - ✅ **Exposição de `session.data` pela Store API: corrigida ([ADR-006](decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md), invariante 24).**
   - **Antes** (comprovado na API em execução em 2026-09-27, só com a publishable key e o ID, sem login): `GET /store/carts/:id` devolvia `data` inteiro das sessions do Mercado Pago, com `card_token`, `payer` (e-mail e CPF), `issuer_id`, `installments`, idempotency keys, `mercadopago_order_id`/`payment_id`, status internos, QR/ticket e geração Pix. Isso valia também para carts completos. Com `?fields=`, o mesmo saía em `payments[].data` do cart e em `GET /store/orders/:id` de pedido guest.
   - **Depois** (mesma verificação): em todos esses caminhos, inclusive `?fields=` sem `provider_id`, sai só `data: { payment_method_id }`. O armazenamento não mudou (`session.data` e `payment.data` completos [banco 2026-09-27]).
-  - 🔍 Continua aberto: `GET /store/mercadopago/orders/:id/pix` (pendência 4).
+  - ✅ `GET /store/mercadopago/orders/:id/pix` reduzida a `status` + `ticket_url` (pendência 4).
 
 ## Dívida técnica
 

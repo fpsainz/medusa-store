@@ -20,10 +20,7 @@ type MercadoPagoPaymentCollection = {
 
 type PixDto = {
   status: string
-  qr_code?: string
-  qr_code_base64?: string
   ticket_url?: string
-  expires_at?: string
 }
 
 function getStringField(data: Record<string, unknown> | null | undefined, key: string): string | undefined {
@@ -31,23 +28,17 @@ function getStringField(data: Record<string, unknown> | null | undefined, key: s
   return typeof value === "string" ? value : undefined
 }
 
-// This is the only surface the storefront's Pix UI is allowed to read. It
-// intentionally does not return the payment session itself, `session.data`
-// wholesale, the payer, any document/identification, the idempotency key,
-// or any other Mercado Pago internal id: only the four Pix-specific fields
-// the client needs to render the QR/copy-paste/ticket link, plus the
-// session's own status (so the client knows when it flips to `authorized`).
+// The order page (PaymentDetails) is the only consumer, and it only reports
+// the outcome: it needs the session's status (awaiting vs `authorized`) and
+// the ticket link it offers while awaiting. The route is reachable with the
+// order id alone (guest orders), so nothing else is returned: no QR code or
+// copy-paste payload (shown only on the Review, via carts/:id/pix), no
+// expiration, no `session.data`, payer, identification, idempotency key or
+// Mercado Pago internal id.
 function toPixDto(session: MercadoPagoPaymentSession): PixDto {
-  const data = session.data ?? undefined
-
   return {
     status: session.status ?? "pending",
-    qr_code: getStringField(data, "mercadopago_pix_qr_code"),
-    qr_code_base64: getStringField(data, "mercadopago_pix_qr_code_base64"),
-    ticket_url: getStringField(data, "mercadopago_pix_ticket_url"),
-    expires_at:
-      getStringField(data, "mercadopago_pix_date_of_expiration") ??
-      getStringField(data, "mercadopago_pix_expiration_time"),
+    ticket_url: getStringField(session.data, "mercadopago_pix_ticket_url"),
   }
 }
 
@@ -77,7 +68,11 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 
   const mercadoPagoSession = order?.payment_collections
     ?.flatMap((collection) => collection.payment_sessions ?? [])
-    .find((session) => session.provider_id === MERCADOPAGO_PROVIDER_ID)
+    .find(
+      (session) =>
+        session.provider_id === MERCADOPAGO_PROVIDER_ID &&
+        session.data?.payment_method_id === "pix"
+    )
 
   if (!mercadoPagoSession) {
     throw new MedusaError(

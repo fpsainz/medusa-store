@@ -122,7 +122,7 @@ Todos os campos acima continuam gravados, porque têm consumidor no backend: pro
 |---|---|
 | Store API genérica (`/store/carts*`, `/store/payment-collections*`, `/store/orders*`) | `data` de sessions e payments do Mercado Pago reduzido a `{ payment_method_id }` (invariante 24, [ADR-006](../decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md)). A Review usa esse campo para detectar Pix. |
 | `GET /store/mercadopago/carts/:id/pix` | DTO `toPixPaymentDto`: status (display, session, Order, payment), QR, copia e cola, ticket, expiração e `mercadopago_order_id` (o painel Pix o usa para abrir o QR uma vez por cobrança). |
-| `GET /store/mercadopago/orders/:id/pix` | DTO da página do pedido: status, QR, ticket e expiração. |
+| `GET /store/mercadopago/orders/:id/pix` | DTO da página do pedido: só `status` (da session) e `ticket_url`, e só quando o pedido tem uma session Pix (`payment_method_id === "pix"`); nos outros casos, 404. Sem QR, copia e cola nem expiração: a página do pedido só informa o resultado. |
 | `POST /store/mercadopago/payment-sessions/:id/pix` | Mesmo DTO da rota do cart. |
 
 Nunca saem para o storefront: `card_token`, `issuer_id`, `installments`, `payer`, idempotency keys, `mercadopago_payment_id`, `mercadopago_external_reference`, geração Pix nem status internos fora dos DTOs.
