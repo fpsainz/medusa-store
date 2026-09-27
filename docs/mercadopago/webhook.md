@@ -1,6 +1,6 @@
 # Webhook Mercado Pago
 
-> Status: vigente · Última verificação: 2026-09-25 · Commit: `0326748`
+> Status: vigente · Última verificação: 2026-09-27 · Commit: `3a56150`
 
 Arquivo: `apps/backend/src/api/hooks/payment/[provider]/route.ts`. Ele **sobrescreve** a rota de webhook de pagamento do core do Medusa, no mesmo caminho.
 
@@ -31,7 +31,13 @@ O Medusa entrega o payload a `getWebhookActionAndData` (`service.ts`), que **nã
 - Mapeia o status com `getStatusFromGateway` (a mesma tabela do cartão, também para o Pix). Só `captured` e `authorized` geram ação; o resto vira `not_supported`.
 - Exige `amount` como string não vazia.
 
-A partir da ação, o core do Medusa 2.20.1 segue o fluxo nativo `processPaymentWorkflow` → `completeCartAfterPaymentStep` → `completeCartWorkflow`, que completa o cart mesmo sem o navegador. Esse fluxo foi validado em E2E **antes** do hardening (`0326748`); a correlação nova ainda não foi reexecutada com webhook real. Evidência em [../status.md](../status.md#evidência-e2e).
+A partir da ação, o core do Medusa 2.20.1 segue o fluxo nativo `processPaymentWorkflow` → `completeCartAfterPaymentStep` → `completeCartWorkflow`, que completa o cart mesmo sem o navegador.
+
+## Validação
+
+- ✅ Correlação validada por teste unitário (ver [Testes](#testes)).
+- ✅ Correlação validada por webhook real depois do hardening, em 2026-09-27, com o código `3a56150`. Foram cobertos: Pix pago completando o cart só pelo webhook, notificação tardia de cart já completo sem efeito, Order paga sem session respondendo 503 sem atingir outra session, e `order.action_required` sem autorizar. Evidência em [../status.md](../status.md#webhook-real-depois-do-hardening-2026-09-27-código-3a56150).
+- Um Pix criado pelo checkout não é aprovável no sandbox; ver [testing.md](testing.md#pix-no-sandbox).
 
 ## Por que o HMAC usa `data.id` em minúsculas
 

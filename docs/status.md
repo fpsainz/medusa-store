@@ -1,33 +1,34 @@
 # Status do projeto
 
-> Status: vigente · Última verificação: 2026-09-27 · Commit: `0326748` + correção da INV-001 não commitada (ADR-005) · Branch: `rebuild/mercadopago-pix-storefront`
+> Status: vigente · Última verificação: 2026-09-27 · Commit: `3a56150` · Branch: `rebuild/mercadopago-pix-storefront`
 
 Retrato atual. Atualizar ao fim de cada etapa relevante. Histórico fica no Git, não aqui. Marcadores de origem: [README.md](README.md#convenções).
 
-**Próxima sessão começa por:** commit da correção da INV-001 ([ADR-005](decisions/ADR-005-card-payment-type-from-brick.md)) → E2E real do webhook depois do hardening. **Não repetir a auditoria geral do fluxo Pix:** o que foi comprovado está abaixo.
+**Próxima sessão começa por:** decidir como validar Pix pago pelo checkout no sandbox (ver [limitação do sandbox](mercadopago/testing.md#pix-no-sandbox)) → cenários B e B' depois do hardening. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
 
 Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 🔍 investigação aberta · 🛠 dívida técnica · ❌ não existe · — sem registro
 
 ## Git
 
-- Branch atual `rebuild/mercadopago-pix-storefront`, **3 commits à frente da `main`** (`81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix). O Pix não está na `main`.
+- Branch atual `rebuild/mercadopago-pix-storefront`, **4 commits à frente da `main`** (`81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001). O Pix não está na `main`.
 - Existe a branch local `recovery/base-81f5caf`, que aponta para `81f5caf`.
 
 ## Matriz de evidências
 
-"Teste unitário" = specs do backend (121 testes passando em 2026-09-25). "E2E real" = checkout real em sandbox; os números são pedidos Medusa. Todo o E2E foi executado **antes** do hardening do webhook (`0326748`) [decisão humana 2026-09-27].
+"Teste unitário" = specs do backend (141 testes passando em 2026-09-27). "E2E real" = checkout real em sandbox; os números são pedidos Medusa. O E2E Pix #75–#78 foi executado **antes** do hardening do webhook (`0326748`) [decisão humana 2026-09-27]; #79 em diante, depois.
 
 | Área | Implementado | Teste unitário | E2E real | Estado |
 |---|---|---|---|---|
 | Pix preparado na Review | ✅ | ✅ | ✅ | Validado |
 | QR / copia e cola | ✅ | ✅ | ✅ | Validado |
-| A — Pix pendente → Place order | ✅ | ✅ | ✅ #75, #78 | Validado |
-| B — Place order → webhook depois | ✅ | ✅ | ✅ #76 | Validado |
+| A — Pix pendente → Place order | ✅ | ✅ | ✅ #75, #78 (antes); #81, #82, #84 (depois) | Validado |
+| B — Place order → webhook depois | ✅ | ✅ | ✅ #76 (antes); ⚠ depois: Pix do checkout não é aprovável no sandbox | Validado só antes do hardening |
 | B' — webhook (pago) → usuário na Review → Place order | ✅ | ✅ | ⚠ | E2E isolado pendente |
-| C — Pix pago → webhook → aba fechada, sem Place order | ✅ | parcial¹ | ✅ #77 | Validado |
+| C — Pix pago → webhook → aba fechada, sem Place order | ✅ | parcial¹ | ✅ #77 (antes); ✅ #83 (depois, webhook real) | Validado |
 | Bloqueio do Place order (Pix) | ✅ | ❌ storefront sem testes | ✅ | Validado em E2E |
-| Webhook (fluxo antes do hardening) | ✅ | ✅ | ✅ | ⚠ comprovado antes do hardening |
-| Correlação nova do webhook (depois do hardening) | ✅ | ✅ | ⚠ | E2E real pendente |
+| Webhook: assinatura, `GET /v1/orders`, correlação exata | ✅ | ✅ | ✅ webhooks reais de 2026-09-27 | Validado depois do hardening |
+| Webhook: notificação duplicada/tardia de cart já completo | ✅ | ✅ | ✅ #80 | Validado |
+| Webhook: Order paga de outra cobrança não atinge a session | ✅ | ✅ | ✅ teste negativo com Order sandbox `APRO` | Validado |
 | Cartão (crédito) | ✅ `payment_type_id = credit_card` | parcial² | ✅ #79 (antes), #80 (regressão após a correção) | Validado (2026-09-27) |
 | Cartão (débito) | ✅ `payment_type_id = debit_card` → `type: debit_card` (ADR-005) | ✅ | ⚠ inviável no sandbox: o único débito de teste oficial é classificado como `prepaid_card` | Corrigido; E2E de débito não validável no sandbox atual |
 | `refundPayment` | existe no código | ❌ | — | Não validado |
@@ -40,9 +41,9 @@ Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 
 
 ## Evidência E2E
 
-Fonte: execução real relatada pelo responsável, antes de `0326748` [decisão humana 2026-09-27].
-
 ### Pix
+
+Fonte: execução real relatada pelo responsável, antes de `0326748` [decisão humana 2026-09-27].
 
 ```text
 A  — Pix pendente → Place order                          ✅ #75  ✅ #78
@@ -58,6 +59,37 @@ Bloqueio do Place order
 
 **B' é diferente de C** e não deve ser tratado como validado.
 
+### Webhook real depois do hardening (2026-09-27, código `3a56150`)
+
+Fonte: notificações reais do Mercado Pago (sandbox, `live_mode=false`) observadas no inspetor do túnel e no log do backend, `GET /v1/orders/{id}` com o access token de teste e consultas read-only [banco 2026-09-27]. Todas as notificações tinham `x-signature` e `type=order`, e nenhuma recebeu 401.
+
+```text
+C  — cart de 2026-09-25, Pix já pago, completado só pelo webhook         ✅ #83
+     notificação  order.processed · data.id = Order MP do cart · x-request-id cb2fc86b-…
+     Order MP     processed/accredited · payment processed/accredited · pix/bank_transfer · R$ 135,00
+                  external_reference = cart_01M3BHMWYZ1S8CGGJ6B6W5XX07
+     session      payses_01M3BHNCDYHRY1CY983X68Q5M4 — única session do cart; mercadopago_order_id == data.id
+                  pending → authorized
+     Payment      pay_01M3HQ06QS1KKVEFJ1BSB62XS8 · R$ 135 · capture capt_01M3HQ06THK5SVJ1PDZ070VHWE
+     Order Medusa order_01M3HQ07RP9GWZ9B9TS40Q2MEX (#83) · cart completed_at 15:16:11Z
+     sem chamada a /store/carts/:id/complete para esse cart; Payments 32 → 33 (só este)
+     O pagamento foi feito em 2026-09-25 08:14Z; a notificação só chegou em 2026-09-27 (túnel fora do ar no intervalo).
+
+Duplicada/tardia — order.processed da Order MP da #80 (cartão), cart já completo   ✅
+     200 · session exata encontrada · evento processado · nenhum Payment, Capture ou Order novos
+
+Negativa — Order MP "A" criada via API no sandbox (payer.first_name APRO), mesmo
+     external_reference e valor de um cart aberto cuja session guarda a Order "B"   ✅
+     order.action_required → 200 "not held by any payment session", sem processar
+     order.processed       → 503 "paid order … has no payment session holding it" (MP reenvia)
+     session/cart/payment collection do cart idênticos antes e depois; nenhum Payment novo
+
+Criação de Pix (order.action_required) × 4 carts novos                           ✅
+     200 · session exata · session continua pending · cart não completado
+```
+
+As Orders Mercado Pago das #81, #82 e #84 (cenário A) nunca foram pagas: o Pix criado pelo checkout não é aprovável no sandbox ([testing.md](mercadopago/testing.md#pix-no-sandbox)). A Order "A" do teste negativo é uma cobrança sandbox paga e sem session, criada de propósito.
+
 ### Cartão
 
 Executado em 2026-09-27, com evidências completas na [INV-001](investigations/INV-001-debit-card-sent-as-credit-card.md#5-evidência-e2e-sandbox-2026-09-27).
@@ -70,13 +102,15 @@ Débito          — o cartão oficial "Elo Débito" é classificado como prepai
 
 Runtime do Brick: `paymentType`, `selectedPaymentMethod` e `additionalData.paymentTypeId` = `"credit_card"` (snake_case; os tipos do `sdk-react` 1.0.7 dizem `'creditCard'`).
 
+
 ## Comportamentos validados
 
 - **Pix em `pending_authorization` é suportado pelo fluxo do Medusa 2.20.1.** O `complete-cart` e o `authorize-payment-session` do `@medusajs/core-flows` 2.20.1 instalado tratam esse status. Na prática, o cenário A mostrou o pedido sendo criado com o Pix pendente.
 - **Pagamento assíncrono completa o carrinho sem o navegador**, pelo mecanismo nativo `processPaymentWorkflow` → `completeCartAfterPaymentStep` → `completeCartWorkflow`. Os três existem no `@medusajs/core-flows` 2.20.1 instalado, e o cenário C comprovou o fluxo de ponta a ponta.
-- **Hardening do webhook** (`0326748`): a correlação passou a ser `data.id` → `GET /v1/orders/{data.id}` → `mercadopago_order_id` → Payment Session exata → cart → evento → `processPaymentWorkflow`. Está coberta por testes unitários. ⚠ Não foi reexecutada com webhook real depois da mudança.
+- **Hardening do webhook** (`0326748`): a correlação passou a ser `data.id` → `GET /v1/orders/{data.id}` → `mercadopago_order_id` → Payment Session exata → cart → evento → `processPaymentWorkflow`. ✅ Correlação validada por teste unitário. ✅ Correlação validada por webhook real (2026-09-27, [evidência](#webhook-real-depois-do-hardening-2026-09-27-código-3a56150)).
 - Migração de identidade do provider concluída [banco 2026-09-25] (resultado em [runbooks/provider-id-migration.md](runbooks/provider-id-migration.md)).
-- 121 testes unitários passando e TypeScript limpo no backend e no storefront (2026-09-25). Lint não foi executado.
+- Em 2026-09-27, no commit `3a56150`: 141 testes unitários passando (6 suítes); `tsc --noEmit` limpo no backend e no storefront; `medusa build` e `next build` passando.
+- Lint, executado pela primeira vez em 2026-09-27, sem baseline anterior: no backend, 0 erros e 2 warnings (`updatePaymentSession` chamado direto em rota; ver dívida "lógica fora de workflows"); no storefront, 12 erros e 3 warnings, todos em código que não foi alterado nesta etapa (`no-explicit-any`, `no-unused-vars`, `ban-ts-comment`, `exhaustive-deps`). Não corrigidos.
 
 ## Pendências funcionais (por prioridade)
 
@@ -86,12 +120,12 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 
 1. **[INV-001](investigations/INV-001-debit-card-sent-as-credit-card.md)**: débito enviado como `credit_card`.
    - ✅ causa confirmada;
-   - ✅ correção implementada, [ADR-005](decisions/ADR-005-card-payment-type-from-brick.md), ainda não commitada;
+   - ✅ correção implementada, [ADR-005](decisions/ADR-005-card-payment-type-from-brick.md), commit `3a56150`;
    - ✅ crédito validado, com regressão E2E #80;
    - ⚠ débito não validável no sandbox atual.
    - Sessions de cartão antigas, sem `payment_type_id`, são recusadas com erro controlado e exigem novo preenchimento.
 2. ✅ ~~E2E real de cartão~~: crédito validado (#79); débito coberto pela INV-001.
-3. ⚠ **E2E real do webhook depois do hardening**, incluindo o cenário B'.
+3. ✅ ~~E2E real do webhook depois do hardening~~: correlação, duplicidade, caso negativo e cenário C validados (#83). ⚠ Continuam pendentes os cenários **B** (depois do hardening) e **B'**, que precisam de um Pix criado pelo checkout e pago no sandbox. Isso não é possível com o código atual ([testing.md](mercadopago/testing.md#pix-no-sandbox)); a saída exige decisão.
 
 ### Média
 
