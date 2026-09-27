@@ -11,7 +11,8 @@ Specs (caminhos relativos a `apps/backend/src/`):
 `PX` = `.../payment-sessions/[id]/pix/__tests__/route.unit.spec.ts` ·
 `CX` = `.../carts/[id]/pix/__tests__/route.unit.spec.ts` ·
 `OX` = `.../orders/[id]/pix/__tests__/route.unit.spec.ts` ·
-`R` = `api/utils/__tests__/redact-mercadopago-data.unit.spec.ts`
+`R` = `api/utils/__tests__/redact-mercadopago-data.unit.spec.ts` ·
+`PA` = `modules/payment-access/__tests__/*.unit.spec.ts`
 
 ## Identidade
 
@@ -42,6 +43,12 @@ Specs (caminhos relativos a `apps/backend/src/`):
 14. **O storefront recebe apenas DTOs** (`toPixPaymentDto`, `toPixDto` da rota de orders): nunca `session.data` completo, payer, identificação ou idempotency keys. `toPixPaymentDto` devolve só `status`, `charge_ref` (hash opaco), QR, copia e cola, ticket e `expires_at`: nunca IDs nem status nativos do Mercado Pago. A rota de orders, acessível só com o ID do pedido, devolve apenas `status` e `ticket_url`, e só para uma session Pix (`payment_method_id === "pix"`); pedido de cartão ou sem session Pix → 404. — Testes: `OX`, `CX`.
 24. **A Store API genérica nunca devolve o `data` do provider Mercado Pago.** Nas respostas de `/store/carts*`, `/store/payment-collections*` e `/store/orders*`, todo `payment_sessions[].data` e `payments[].data` do Mercado Pago, em qualquer profundidade e também com `?fields=`, sai reduzido a `{ payment_method_id }`. Um item sem `provider_id` é reconhecido pelas chaves `mercadopago_*`. O armazenamento não muda, e outros providers não são tocados. — `api/middlewares.ts`, `api/utils/redact-mercadopago-data.ts`. Teste: `R`. [ADR-006](../decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md)
 15. **Respostas de estado Pix usam `Cache-Control: no-store`.** — rotas `prepare`, `carts/[id]/pix`, `orders/[id]/pix`. Testes: `PX`, `CX`, `OX` (os três fazem referência ao header).
+
+## Capability de pagamento (`paymentAccess`)
+
+27. **A capability é opaca e só o hash é persistido.** Token = `pat_` + 32 bytes aleatórios em base64url, nunca JWT. A tabela guarda só o SHA-256 (`token_hash`). Um valor fora do formato é recusado antes de qualquer consulta. — `modules/payment-access/grants.ts`, `service.ts`. Teste: `PA`. [ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)
+28. **Uma capability só vale para o próprio propósito, sem revogação e antes de `expires_at`;** qualquer falha devolve `null`, sem motivo. — `isGrantUsable`, `findUsableGrant`. Teste: `PA`.
+29. **No máximo 3 capabilities Pix ativas por payment session:** cada emissão revoga as mais antigas (`superseded`), e emissões concorrentes convergem para o mesmo conjunto. — `issueGrant`, `selectGrantsToSupersede`, `PIX_PAYMENT_VIEW_POLICY`. Teste: `PA`.
 
 ## Webhook
 

@@ -41,5 +41,10 @@ module.exports = defineConfig({
         ],
       },
     },
+    {
+      // Temporary payment capabilities (ADR-007). Its table comes from
+      // src/modules/payment-access/migrations.
+      resolve: './src/modules/payment-access',
+    },
   ],
 })

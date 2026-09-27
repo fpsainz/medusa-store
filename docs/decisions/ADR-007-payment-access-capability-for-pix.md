@@ -80,7 +80,7 @@ Marcadores de origem: [../README.md](../README.md#convenções). Além deles, **
 
 ## Consequências
 
-- Nova tabela (migration do módulo `payment_access`), que exige autorização explícita antes de ser aplicada.
+- Nova tabela `payment_access_grant` no módulo `paymentAccess` (`apps/backend/src/modules/payment-access`). A migration `Migration20260927120000` foi escrita à mão no formato do `medusa db:generate`, porque a geração conecta ao banco e isso não estava autorizado. Aplicá-la exige autorização explícita.
 - A confirmação do pedido deixa de depender do `order_id` para os dados Pix. Outro browser, sem o cookie, não vê o Pix.
 - Com um cookie por navegador, só a última capability emitida vale: um pedido Pix anterior no mesmo browser deixa de mostrar o Pix.
 - **Não resolve** a exposição de `GET /store/orders/:id` do core; ela é tratada em [INV-002](../investigations/INV-002-store-order-retrieve-without-auth.md).

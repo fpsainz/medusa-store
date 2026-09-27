@@ -175,6 +175,12 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 - 🔍 **`GET /store/orders/:id` do core devolve e-mail e endereços a quem tem o ID do pedido** ([INV-002](investigations/INV-002-store-order-retrieve-without-auth.md)). Verificado no código do `@medusajs/medusa` 2.20.1; não verificado em requisição real.
 - ✅ `GET /store/mercadopago/carts/:id/pix` responde 410 sem corpo depois de `completed_at`, e o DTO Pix (também o do prepare) não traz mais `mercadopago_order_id`, `session_status` nem status nativos (invariantes 14 e 26). Validado por testes unitários; ⚠ não reexecutado em E2E.
 
+### Capability de pagamento ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md), em implementação)
+
+- ✅ Pix com `expiration_time: "PT1H"` e deadline conservadora (`780b740`). Testes unitários; ⚠ não observado no sandbox.
+- ✅ Módulo `paymentAccess` (token opaco, só hash, validação, limite de 3 por session, revogação). Testes unitários.
+- ⚠ **Migration `Migration20260927120000` não aplicada**: exige autorização explícita. Até lá, qualquer uso do módulo falha em execução.
+
 ## Dívida técnica
 
 Não bloqueia nenhuma pendência funcional.
