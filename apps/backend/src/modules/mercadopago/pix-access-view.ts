@@ -1,19 +1,19 @@
-import {
-  PIX_TERMINAL_STATUSES,
-  type PixDisplayStatus,
-  toPixPaymentDto,
-} from "./service"
+import { type PixDisplayStatus, toPixPaymentDto } from "./service"
 
 // What a Pix payment capability (ADR-007) may read. Explicit allowlist:
-//   - while the charge is awaiting payment AND before its deadline: what is
-//     needed to pay (QR, copy-and-paste, ticket link, deadline) plus an
-//     opaque charge reference;
-//   - otherwise (paid, final, or past the deadline): the status only.
+//   - `status`: the real, provider-derived status (toPixPaymentDto), never
+//     rewritten because of the local deadline;
+//   - `payment_window_closed`: application policy (ADR-008/ADR-009), true
+//     once the charge's stored deadline has passed (or none is known);
+//   - payable data (QR, copy-and-paste, ticket link, deadline) plus an opaque
+//     charge reference only while the status is pending AND the window is
+//     open.
 // order_id lets the storefront server check that the capability belongs to
 // the order on the page; it is never a credential and the server does not
 // forward it to the browser.
 export type PixAccessDto = {
   status: PixDisplayStatus
+  payment_window_closed: boolean
   order_id: string | null
   charge_ref?: string
   qr_code?: string
@@ -31,10 +31,6 @@ function parseDeadline(value: unknown): number | undefined {
   return Number.isFinite(time) ? time : undefined
 }
 
-// The status is decided in this order: Medusa already authorized the
-// session (approved); a final Mercado Pago status (stored or read live) is
-// kept; any other state past the deadline, or without a known deadline,
-// becomes "expired" — Mercado Pago may take much longer to report it.
 export function toPixAccessDto(input: {
   session_status?: string | null
   data: Record<string, unknown>
@@ -43,19 +39,17 @@ export function toPixAccessDto(input: {
 }): PixAccessDto {
   const view = toPixPaymentDto({ status: input.session_status, data: input.data }, input.now)
   const deadline = parseDeadline(input.data.mercadopago_pix_expires_at)
-  const pastDeadline = deadline === undefined || input.now.getTime() >= deadline
+  // Without a known deadline the window is treated as closed: nothing payable
+  // is ever exposed without a bound.
+  const paymentWindowClosed = deadline === undefined || input.now.getTime() >= deadline
 
-  const status: PixDisplayStatus =
-    view.status !== "approved" && !PIX_TERMINAL_STATUSES.includes(view.status) && pastDeadline
-      ? "expired"
-      : view.status
-
-  if (status !== "pending" || deadline === undefined) {
-    return { status, order_id: input.order_id }
+  if (view.status !== "pending" || paymentWindowClosed || deadline === undefined) {
+    return { status: view.status, payment_window_closed: paymentWindowClosed, order_id: input.order_id }
   }
 
   return {
-    status,
+    status: view.status,
+    payment_window_closed: false,
     order_id: input.order_id,
     charge_ref: view.charge_ref,
     qr_code: view.qr_code,

@@ -1,6 +1,6 @@
 # ADR-007: Capability temporária (`payment_access`) para acompanhar o Pix depois do checkout
 
-> Status: aceito · Data: 2026-09-27 · Commits: `780b740`, `87587f6`, `86b8ed0`, `93abe1f`, `d5a4b23`, `9884ba5`, `4de8ace`, `f2ceb7c` (E2E em [status](../status.md#capability-de-pagamento-adr-007))
+> Status: aceito · Data: 2026-09-27 · Commits: `780b740`, `87587f6`, `86b8ed0`, `93abe1f`, `d5a4b23`, `9884ba5`, `4de8ace`, `f2ceb7c` (E2E em [status](../status.md#capability-de-pagamento-adr-007)) · Regra de status da decisão 6 substituída pelo [ADR-009](ADR-009-payment-access-keeps-provider-status.md)
 
 Marcadores de origem: [../README.md](../README.md#convenções). Além deles, **[MCP 2026-09-27]** indica documentação oficial do Mercado Pago consultada pelo MCP `search_documentation` (MLB) nessa data.
 

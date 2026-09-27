@@ -16,6 +16,7 @@ Só viram ADR decisões com evidência no código ou no Git. O que não foi deci
 | [ADR-006](ADR-006-store-api-redacts-mercadopago-provider-data.md) | Store API não expõe `data` do provider Mercado Pago | Aceito | 2026-09-27 |
 | [ADR-007](ADR-007-payment-access-capability-for-pix.md) | Capability temporária (`payment_access`) para acompanhar o Pix depois do checkout | Aceito | 2026-09-27 |
 | [ADR-008](ADR-008-pix-payment-window-hides-artifacts.md) | Fim da janela de pagamento do Pix esconde QR/ticket sem mudar o status do provider | Aceito | 2026-09-27 |
+| [ADR-009](ADR-009-payment-access-keeps-provider-status.md) | A leitura por capability mantém o status do provider e sinaliza a janela à parte | Aceito | 2026-09-27 |
 
 As datas são as dos commits em que a decisão entrou no código.
 

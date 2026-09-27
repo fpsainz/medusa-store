@@ -26,8 +26,12 @@ const PaymentDetails = async ({ order }: PaymentDetailsProps) => {
   // the existing one (polling through a Server Action).
   const pixPayment = await retrieveOrderPixPayment(order.id)
   const isPixOrder = pixPayment !== null
+  // Awaiting only while Mercado Pago reports it pending/processing AND the
+  // payment window (application deadline) is still open.
   const isAwaitingPix =
-    isPixOrder && (pixPayment.status === "pending" || pixPayment.status === "processing")
+    isPixOrder &&
+    pixPayment.payment_window_closed !== true &&
+    (pixPayment.status === "pending" || pixPayment.status === "processing")
 
   // Pending Pix has no Payment record yet — the summary falls back to the
   // Mercado Pago provider id and the order's total, without creating one.

@@ -1,6 +1,6 @@
 # ADR-008: Fim da janela de pagamento do Pix esconde QR/ticket sem mudar o status do provider
 
-> Status: aceito · Data: 2026-09-27 · Commits: `5ccd353`
+> Status: aceito · Data: 2026-09-27 · Commits: `5ccd353` · A divergência da rota de capability (Consequências) foi resolvida pelo [ADR-009](ADR-009-payment-access-keeps-provider-status.md)
 
 Marcadores de origem: [../README.md](../README.md#convenções). **[MCP 2026-09-27]** indica documentação oficial do Mercado Pago consultada pelo MCP `search_documentation` (MLB) nessa data.
 

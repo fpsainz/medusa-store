@@ -222,7 +222,8 @@ Banco: 6 grants, todos token_hash hex de 64, nenhum plaintext; 1 superseded, 1 p
 - ✅ `GET /store/mercadopago/orders/:id/pix` e `retrievePixPayment` removidos depois do E2E (commit `refactor(mercadopago): remove legacy Pix order access`).
 - ✅ Limpeza: job diário `cleanup-payment-access-grants` apaga capabilities expiradas ou revogadas há 7 dias ou mais (commit `chore(backend): clean up expired payment access grants`). Testes unitários; filtro conferido read-only no banco (7 grants, 0 elegíveis com 7 dias, 7 com corte em "agora") [banco 2026-09-27]. O job ainda não rodou agendado.
 - ✅ `carts/:id/pix` e o prepare deixam de devolver QR/ticket a partir da deadline local, mantendo o status do provider e sinalizando `payment_window_closed` (`5ccd353`, [ADR-008](decisions/ADR-008-pix-payment-window-hides-artifacts.md)). Testes unitários; ⚠ não reexecutado no sandbox nem no navegador.
-- 🔍 A rota da capability ainda converte `pending` em `expired` depois da deadline (ADR-007 decisão 6), enquanto a Review mantém o status real. Divergência registrada no ADR-008; alinhar exige decisão.
+- ✅ A rota da capability mantém o status real do provider e devolve `payment_window_closed`; a confirmação exibe por `status` + janela ([ADR-009](decisions/ADR-009-payment-access-keeps-provider-status.md)). Testes unitários; ⚠ não reexecutado no sandbox nem no navegador.
+- 🔍 Oferecer um novo Pix na confirmação quando a janela fecha sem pagamento: não existe caminho depois da conclusão do cart; exige decisão (ADR-009).
 - 🔍 `POST /store/mercadopago/payment-sessions/:id` devolve `payment_session` inteiro, com `data`; `/store/mercadopago/*` não é coberto pelo ADR-006. Pendência separada.
 
 ## Dívida técnica

@@ -95,6 +95,28 @@ describe("splitPixAccessView (capability read on the server)", () => {
     assert.deepEqual(charge, { status: "approved" })
   })
 
+  it("after the deadline: real status + window flag reach the client, nothing payable", () => {
+    const { orderId, charge } = splitPixAccessView({
+      status: "pending",
+      payment_window_closed: true,
+      order_id: "order_1",
+    })
+
+    assert.equal(orderId, "order_1")
+    assert.deepEqual(charge, { status: "pending", payment_window_closed: true })
+  })
+
+  it("before the deadline: window open is simply absent on the client, QR kept", () => {
+    const { charge } = splitPixAccessView({
+      status: "pending",
+      payment_window_closed: false,
+      order_id: "order_1",
+      qr_code: "000201",
+    })
+
+    assert.deepEqual(charge, { status: "pending", qr_code: "000201" })
+  })
+
   it("treats a missing order_id as null", () => {
     assert.equal(splitPixAccessView({ status: "pending" }).orderId, null)
   })

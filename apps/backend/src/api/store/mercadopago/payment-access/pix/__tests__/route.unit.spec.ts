@@ -130,10 +130,16 @@ describe("GET /store/mercadopago/payment-access/pix", () => {
 
     const dto = ctx.res.json.mock.calls[0][0]
     expect(dto).toEqual(
-      expect.objectContaining({ status: "pending", order_id: "order_1", qr_code: "000201", ticket_url: "https://ticket" })
+      expect.objectContaining({
+        status: "pending",
+        payment_window_closed: false,
+        order_id: "order_1",
+        qr_code: "000201",
+        ticket_url: "https://ticket",
+      })
     )
     expect(Object.keys(dto).every((key) =>
-      ["status", "order_id", "charge_ref", "qr_code", "qr_code_base64", "ticket_url", "expires_at"].includes(key)
+      ["status", "payment_window_closed", "order_id", "charge_ref", "qr_code", "qr_code_base64", "ticket_url", "expires_at"].includes(key)
     )).toBe(true)
     expect(JSON.stringify(dto)).not.toMatch(
       /tok_should_not_leak|buyer@example|12345678909|base-key|pix-key|ORD_PIX_A|PAY_PIX_A|payses_pix|paycol_1|cart_1|pag_1|test-access-token|pat_/
@@ -154,7 +160,7 @@ describe("GET /store/mercadopago/payment-access/pix", () => {
     await GET(ctx.req, ctx.res)
 
     expect(orderGetMock).not.toHaveBeenCalled()
-    expect(ctx.res.json.mock.calls[0][0]).toEqual({ status: "approved", order_id: "order_1" })
+    expect(ctx.res.json.mock.calls[0][0]).toEqual({ status: "approved", payment_window_closed: false, order_id: "order_1" })
   })
 
   it("reflects a live final state (canceled) with the status only", async () => {
@@ -163,7 +169,7 @@ describe("GET /store/mercadopago/payment-access/pix", () => {
 
     await GET(ctx.req, ctx.res)
 
-    expect(ctx.res.json.mock.calls[0][0]).toEqual({ status: "canceled", order_id: "order_1" })
+    expect(ctx.res.json.mock.calls[0][0]).toEqual({ status: "canceled", payment_window_closed: false, order_id: "order_1" })
   })
 
   it("answers from the stored state when Mercado Pago is unreachable", async () => {
@@ -175,7 +181,7 @@ describe("GET /store/mercadopago/payment-access/pix", () => {
     expect(ctx.res.json.mock.calls[0][0].status).toBe("pending")
   })
 
-  it("past the deadline stops exposing the QR", async () => {
+  it("past the deadline: real status (Mercado Pago still action_required → pending), window closed, no QR", async () => {
     const past = new Date(Date.now() - 60 * 1000).toISOString()
     const ctx = build({
       sessions: [{ ...SESSION, data: { ...SESSION.data, mercadopago_pix_expires_at: past } }],
@@ -183,7 +189,20 @@ describe("GET /store/mercadopago/payment-access/pix", () => {
 
     await GET(ctx.req, ctx.res)
 
-    expect(ctx.res.json.mock.calls[0][0]).toEqual({ status: "expired", order_id: "order_1" })
+    expect(orderGetMock).toHaveBeenCalledWith({ id: "ORD_PIX_A" })
+    expect(ctx.res.json.mock.calls[0][0]).toEqual({ status: "pending", payment_window_closed: true, order_id: "order_1" })
+  })
+
+  it("past the deadline with Mercado Pago approved: approved, window closed, nothing payable", async () => {
+    orderGetMock.mockResolvedValue(liveOrder("processed"))
+    const past = new Date(Date.now() - 60 * 1000).toISOString()
+    const ctx = build({
+      sessions: [{ ...SESSION, data: { ...SESSION.data, mercadopago_pix_expires_at: past } }],
+    })
+
+    await GET(ctx.req, ctx.res)
+
+    expect(ctx.res.json.mock.calls[0][0]).toEqual({ status: "approved", payment_window_closed: true, order_id: "order_1" })
   })
 
   describe("uniform failure", () => {

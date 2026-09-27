@@ -63,7 +63,15 @@ const OrderPixPayment = ({ orderId, initialCharge }: OrderPixPaymentProps) => {
     }
   }, [orderId, pixCharge, isTerminal, accessClosed, pollBudgetExhausted])
 
-  const isPayable = !accessClosed && pixCharge.status === "pending" && hasPayablePixData(pixCharge)
+  // `status` is Mercado Pago's; `payment_window_closed` is the application's
+  // deadline (ADR-008/ADR-009). The deadline never rewrites the status: a
+  // charge Mercado Pago still reports as pending after its deadline is shown
+  // as "time to pay ended", without anything payable.
+  const windowClosed = pixCharge.payment_window_closed === true
+  const isPayable =
+    !accessClosed && pixCharge.status === "pending" && !windowClosed && hasPayablePixData(pixCharge)
+  const windowEndedUnpaid =
+    windowClosed && (pixCharge.status === "pending" || pixCharge.status === "processing")
 
   useEffect(() => {
     if (!isPayable) {
@@ -74,8 +82,15 @@ const OrderPixPayment = ({ orderId, initialCharge }: OrderPixPaymentProps) => {
   return (
     <div className="flex flex-col gap-2 mt-4" data-testid="pix-order-payment">
       <Text className="txt-medium-plus text-ui-fg-base" data-testid="pix-order-status">
-        {PIX_STATUS_LABELS[pixCharge.status]}
+        {windowEndedUnpaid ? "Time to pay this Pix has ended" : PIX_STATUS_LABELS[pixCharge.status]}
       </Text>
+
+      {windowEndedUnpaid && (
+        <Text className="txt-small text-ui-fg-subtle" data-testid="pix-order-window-closed">
+          This Pix can no longer be paid. If you already paid it, the confirmation
+          will appear here.
+        </Text>
+      )}
 
       {isPayable && (
         <>
