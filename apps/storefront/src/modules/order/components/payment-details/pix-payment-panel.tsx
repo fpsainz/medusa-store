@@ -7,6 +7,7 @@ import ErrorMessage from "@modules/checkout/components/error-message"
 import {
   preparePixPayment,
   retrieveCartPixPayment,
+  type CartPixPoll,
   type PixCharge,
   type PixChargeStatus,
 } from "@lib/data/cart"
@@ -94,9 +95,12 @@ const PixPaymentPanel = ({
   const [isQrModalOpen, setIsQrModalOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [pollCount, setPollCount] = useState(0)
+  // The cart was completed (webhook or another tab) while this Review is
+  // open: the charge is no longer shown and "Place order" leads to the order.
+  const [cartCompleted, setCartCompleted] = useState(false)
 
   const preparedSessionRef = useRef<string | null>(null)
-  const autoOpenedOrderRef = useRef<string | null>(null)
+  const autoOpenedChargeRef = useRef<string | null>(null)
 
   const prepare = useCallback(
     async (regenerate: boolean) => {
@@ -127,8 +131,22 @@ const PixPaymentPanel = ({
     void prepare(false)
   }, [paymentSessionId, prepare])
 
+  const applyPoll = useCallback((next: CartPixPoll | null) => {
+    if (!next) {
+      return
+    }
+
+    if (next.cart_completed) {
+      setCartCompleted(true)
+      setIsQrModalOpen(false)
+      return
+    }
+
+    setPixCharge(next.charge)
+  }, [])
+
   const status = pixCharge?.status
-  const isTerminal = status ? TERMINAL_STATUSES.includes(status) : false
+  const isTerminal = cartCompleted || (status ? TERMINAL_STATUSES.includes(status) : false)
   const pollBudgetExhausted = pollCount >= MAX_POLLS
 
   useEffect(() => {
@@ -145,10 +163,7 @@ const PixPaymentPanel = ({
         return
       }
 
-      if (next) {
-        setPixCharge(next)
-      }
-
+      applyPoll(next)
       setPollCount((count) => count + 1)
     }, POLL_INTERVAL_MS)
 
@@ -156,24 +171,28 @@ const PixPaymentPanel = ({
       cancelled = true
       clearTimeout(timeout)
     }
-  }, [cartId, pixCharge, isTerminal, pollBudgetExhausted])
+  }, [cartId, pixCharge, isTerminal, pollBudgetExhausted, applyPoll])
 
   // Open the modal automatically once per Mercado Pago charge, as soon as it
-  // is awaiting payment with real data. A regenerated charge (new order id)
+  // is awaiting payment with real data. A regenerated charge (new charge_ref)
   // opens it again; closing it is never undone by a later poll.
   useEffect(() => {
     if (
+      !cartCompleted &&
       pixCharge?.status === "pending" &&
       hasPayableData(pixCharge) &&
-      pixCharge.mercadopago_order_id &&
-      autoOpenedOrderRef.current !== pixCharge.mercadopago_order_id
+      pixCharge.charge_ref &&
+      autoOpenedChargeRef.current !== pixCharge.charge_ref
     ) {
-      autoOpenedOrderRef.current = pixCharge.mercadopago_order_id
+      autoOpenedChargeRef.current = pixCharge.charge_ref
       setIsQrModalOpen(true)
     }
-  }, [pixCharge])
+  }, [pixCharge, cartCompleted])
 
+  // "Place order" on a completed cart returns the existing order (Medusa's
+  // completeCart is idempotent) and redirects to its confirmation page.
   const placeOrderAllowed =
+    cartCompleted ||
     pixCharge?.status === "approved" ||
     (pixCharge?.status === "pending" && hasPayableData(pixCharge))
 
@@ -182,10 +201,7 @@ const PixPaymentPanel = ({
   }, [placeOrderAllowed, onPlaceOrderAllowedChange])
 
   const refreshStatus = async () => {
-    const next = await retrieveCartPixPayment(cartId).catch(() => null)
-    if (next) {
-      setPixCharge(next)
-    }
+    applyPoll(await retrieveCartPixPayment(cartId).catch(() => null))
     setPollCount(0)
   }
 
@@ -203,22 +219,24 @@ const PixPaymentPanel = ({
   }
 
   const expirationLabel = formatExpiration(pixCharge?.expires_at)
-  const isPayable = status === "pending" && pixCharge !== null && hasPayableData(pixCharge)
-  const canRegenerate = status ? REGENERABLE_STATUSES.includes(status) : false
-  const nativeStatus = [pixCharge?.order_status, pixCharge?.order_status_detail]
-    .filter(Boolean)
-    .join(" / ")
+  const isPayable =
+    !cartCompleted && status === "pending" && pixCharge !== null && hasPayableData(pixCharge)
+  const canRegenerate = !cartCompleted && (status ? REGENERABLE_STATUSES.includes(status) : false)
 
-  const statusBlock = pixCharge && (
+  const statusBlock = cartCompleted ? (
+    <div className="flex flex-col gap-1">
+      <Text className="txt-medium-plus text-ui-fg-base" data-testid="pix-payment-status">
+        This order has already been completed
+      </Text>
+      <Text className="txt-small text-ui-fg-subtle" data-testid="pix-cart-completed">
+        Click &quot;Place order&quot; to see your order.
+      </Text>
+    </div>
+  ) : pixCharge && (
     <div className="flex flex-col gap-1">
       <Text className="txt-medium-plus text-ui-fg-base" data-testid="pix-payment-status">
         {STATUS_LABELS[pixCharge.status]}
       </Text>
-      {nativeStatus && (
-        <Text className="txt-small text-ui-fg-subtle" data-testid="pix-native-status">
-          Mercado Pago: {nativeStatus}
-        </Text>
-      )}
       {pixCharge.status === "approved" && (
         <Text className="txt-small text-ui-fg-subtle">
           Click &quot;Place order&quot; to finish your order.

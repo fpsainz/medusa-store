@@ -1111,23 +1111,35 @@ describe("toPixPaymentDto", () => {
     mercadopago_pix_date_of_expiration: "2026-09-26T12:00:00.000-03:00",
   }
 
-  it("returns only display fields and native statuses — no payer, card or key", () => {
+  it("returns only the display status and payable data — no payer, card, key, Mercado Pago id or native status", () => {
     const dto = toPixPaymentDto({ status: "pending", data })
 
-    expect(dto).toEqual({
-      status: "pending",
-      session_status: "pending",
-      mercadopago_order_id: "ORD_PIX_A",
-      order_status: "action_required",
-      order_status_detail: "waiting_transfer",
-      payment_status: "action_required",
-      payment_status_detail: "waiting_transfer",
-      qr_code: "000201",
-      qr_code_base64: "iVBOR",
-      ticket_url: "https://ticket",
-      expires_at: "2026-09-26T12:00:00.000-03:00",
-    })
-    expect(JSON.stringify(dto)).not.toMatch(/buyer@example|12345678909|tok_secret|pix-key/)
+    expect(Object.keys(dto).sort()).toEqual(
+      ["charge_ref", "expires_at", "qr_code", "qr_code_base64", "status", "ticket_url"].sort()
+    )
+    expect(dto).toEqual(
+      expect.objectContaining({
+        status: "pending",
+        qr_code: "000201",
+        qr_code_base64: "iVBOR",
+        ticket_url: "https://ticket",
+        expires_at: "2026-09-26T12:00:00.000-03:00",
+      })
+    )
+    expect(JSON.stringify(dto)).not.toMatch(
+      /buyer@example|12345678909|tok_secret|pix-key|ORD_PIX_A|action_required|waiting_transfer/
+    )
+  })
+
+  it("derives an opaque charge_ref that changes when the charge changes", () => {
+    const first = toPixPaymentDto({ status: "pending", data })
+    const again = toPixPaymentDto({ status: "pending", data })
+    const replaced = toPixPaymentDto({ status: "pending", data: { ...data, mercadopago_order_id: "ORD_PIX_B" } })
+
+    expect(first.charge_ref).toMatch(/^[0-9a-f]{16}$/)
+    expect(again.charge_ref).toBe(first.charge_ref)
+    expect(replaced.charge_ref).not.toBe(first.charge_ref)
+    expect(toPixPaymentDto({ status: "pending", data: { payment_method_id: "pix" } }).charge_ref).toBeUndefined()
   })
 
   it("prefers the stored conservative deadline as expires_at", () => {

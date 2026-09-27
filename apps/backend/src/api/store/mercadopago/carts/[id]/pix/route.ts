@@ -22,6 +22,7 @@ type PaymentSessionRow = {
 
 type CartRow = {
   id: string
+  completed_at?: string | Date | null
   payment_collection?: { payment_sessions?: PaymentSessionRow[] | null } | null
 }
 
@@ -29,6 +30,10 @@ type CartRow = {
 // Review. Access follows Medusa's own store cart model: the cart id is the
 // capability (as for GET /store/carts/:id), and the Pix session is only
 // ever looked up inside that cart's own payment collection.
+//
+// The cart id stops being a credential once the cart is completed: the route
+// then answers 410 with no body, so a Review still open when the webhook
+// completed the cart can stop showing a paid charge (see ADR-007).
 //
 // While the charge is not in a terminal state, the Mercado Pago Order is
 // read (GET /v1/orders/:id, read-only) so the Review reflects expiration,
@@ -44,6 +49,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       entity: "cart",
       fields: [
         "id",
+        "completed_at",
         "payment_collection.payment_sessions.id",
         "payment_collection.payment_sessions.provider_id",
         "payment_collection.payment_sessions.status",
@@ -59,6 +65,13 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     throw new MedusaError(MedusaError.Types.NOT_FOUND, "Mercado Pago: cart not found.")
   }
 
+  res.setHeader("Cache-Control", "no-store")
+
+  if (cart.completed_at) {
+    res.status(410).end()
+    return
+  }
+
   const session = cart.payment_collection?.payment_sessions?.find(
     (candidate) =>
       candidate.provider_id === MERCADOPAGO_PROVIDER_ID &&
@@ -71,8 +84,6 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       "Mercado Pago: no Pix payment session found for this cart."
     )
   }
-
-  res.setHeader("Cache-Control", "no-store")
 
   const stored = toPixPaymentDto(session)
   const sessionData = session.data ?? {}

@@ -16,7 +16,7 @@ Resultado em 2026-09-27, commit `3a56150`: **6 suítes, 141 testes, todos passan
 | `api/hooks/payment/[provider]/__tests__/route.unit.spec.ts` | Todo o webhook: comportamento do core, validações, HMAC, códigos de resposta, correlação, `getWebhookActionAndData` |
 | `api/store/mercadopago/payment-sessions/[id]/__tests__/route.unit.spec.ts` | Allowlist, posse da session, provider, não autorização |
 | `api/store/mercadopago/payment-sessions/[id]/pix/__tests__/route.unit.spec.ts` | Prepare/regenerate, session já autorizada, posse, cart completo, rejeição de sessions de cartão |
-| `api/store/mercadopago/carts/[id]/pix/__tests__/route.unit.spec.ts` | Leitura ao vivo, estados terminais, fallback com o Mercado Pago fora do ar, 404, isolamento por cart |
+| `api/store/mercadopago/carts/[id]/pix/__tests__/route.unit.spec.ts` | Leitura ao vivo, estados terminais, fallback com o Mercado Pago fora do ar, DTO sem IDs/status nativos, 410 para cart concluído, 404, isolamento por cart |
 | `api/store/mercadopago/orders/[id]/pix/__tests__/route.unit.spec.ts` | DTO mínimo (`status` + `ticket_url`), ausência de QR/payer/dados internos, escolha da session Pix, 404 para cartão e outros providers |
 
 ### Sem cobertura

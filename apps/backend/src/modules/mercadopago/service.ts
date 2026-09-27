@@ -152,12 +152,7 @@ export function normalizePixStatus(input: {
 
 export type PixPaymentDto = {
   status: PixDisplayStatus
-  session_status: string
-  mercadopago_order_id?: string
-  order_status?: string
-  order_status_detail?: string
-  payment_status?: string
-  payment_status_detail?: string
+  charge_ref?: string
   qr_code?: string
   qr_code_base64?: string
   ticket_url?: string
@@ -169,11 +164,20 @@ function getStringField(data: PaymentData | null | undefined, key: string): stri
   return typeof value === 'string' ? value : undefined
 }
 
-// The only Pix surface the storefront reads: display fields plus the native
-// Mercado Pago statuses. Never the payer, identification, card data,
-// idempotency keys or anything else in session.data. A session Medusa has
-// already authorized (webhook or completeCart) is 'approved' regardless of
-// the last stored Mercado Pago status.
+// Opaque reference of the current Pix charge, so the storefront can tell a
+// regenerated charge apart (the Review opens the QR once per charge) without
+// ever receiving the Mercado Pago Order id.
+function toChargeRef(orderId: string | undefined): string | undefined {
+  return orderId
+    ? createHash('sha256').update(`pix-charge:${orderId}`).digest('hex').slice(0, 16)
+    : undefined
+}
+
+// The only Pix surface the storefront reads: the display status plus what is
+// needed to pay. Never the payer, identification, card data, idempotency
+// keys, Mercado Pago ids, native statuses or anything else in session.data.
+// A session Medusa has already authorized (webhook or completeCart) is
+// 'approved' regardless of the last stored Mercado Pago status.
 export function toPixPaymentDto(session: {
   status?: string | null
   data?: PaymentData | null
@@ -192,12 +196,7 @@ export function toPixPaymentDto(session: {
 
   return {
     status,
-    session_status: sessionStatus,
-    mercadopago_order_id: getStringField(data, 'mercadopago_order_id'),
-    order_status: orderStatus,
-    order_status_detail: orderStatusDetail,
-    payment_status: paymentStatus,
-    payment_status_detail: paymentStatusDetail,
+    charge_ref: toChargeRef(getStringField(data, 'mercadopago_order_id')),
     qr_code: getStringField(data, 'mercadopago_pix_qr_code'),
     qr_code_base64: getStringField(data, 'mercadopago_pix_qr_code_base64'),
     ticket_url: getStringField(data, 'mercadopago_pix_ticket_url'),

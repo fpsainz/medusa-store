@@ -56,7 +56,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
    - Caso contrário → cancela a anterior (se pendente) e cria outra com a próxima "geração" de idempotency key.
    - Toda Order Pix nova é criada com `transactions.payments[].expiration_time: "PT1H"`. A deadline conservadora (`computePixDeadline`) fica em `mercadopago_pix_expires_at` e é o `expires_at` dos DTOs ([ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)).
    - A session continua `pending`. Ver [ADR-003](../decisions/ADR-003-pix-charge-created-at-review.md).
-3. O painel faz polling de `GET /store/mercadopago/carts/:id/pix` (5 s, máx. 180). Enquanto o status não é terminal, a rota lê a Order ao vivo no Mercado Pago (só leitura; não grava na session).
+3. O painel faz polling de `GET /store/mercadopago/carts/:id/pix` (5 s, máx. 180). Enquanto o status não é terminal, a rota lê a Order ao vivo no Mercado Pago (só leitura; não grava na session). Depois de `completed_at` (por exemplo, o webhook concluiu o cart com a Review aberta), a rota responde **410 sem corpo**: o painel esconde QR e ticket, informa que o pedido já foi concluído e libera "Place order", que devolve o pedido existente porque o `completeCartWorkflow` do Medusa 2.20.1 é idempotente (link `order_cart`).
 4. "Place order" só é liberado com a cobrança `pending` com dados pagáveis (QR/copia-e-cola/ticket) ou `approved`.
 5. `completeCart` → `authorizePayment` → `authorizePix`. Se já existe Order: `reauthorizePixOrder` (lê a Order, confere o valor e mapeia com `resolvePixStatus`). Se não existe: cria a Order (fallback).
 6. Pagamento confirmado pelo webhook → evento → `getWebhookActionAndData` → `captured`.
@@ -122,8 +122,8 @@ Todos os campos acima continuam gravados, porque têm consumidor no backend: pro
 | Caminho | O storefront recebe |
 |---|---|
 | Store API genérica (`/store/carts*`, `/store/payment-collections*`, `/store/orders*`) | `data` de sessions e payments do Mercado Pago reduzido a `{ payment_method_id }` (invariante 24, [ADR-006](../decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md)). A Review usa esse campo para detectar Pix. |
-| `GET /store/mercadopago/carts/:id/pix` | DTO `toPixPaymentDto`: status (display, session, Order, payment), QR, copia e cola, ticket, expiração e `mercadopago_order_id` (o painel Pix o usa para abrir o QR uma vez por cobrança). |
+| `GET /store/mercadopago/carts/:id/pix` | Cart aberto: DTO `toPixPaymentDto` com `status` (display), `charge_ref`, QR, copia e cola, ticket e `expires_at`. `charge_ref` é uma referência opaca da cobrança atual (hash truncado, não é ID do Mercado Pago); o painel a usa para abrir o QR uma vez por cobrança. Cart concluído: 410 sem corpo. |
 | `GET /store/mercadopago/orders/:id/pix` | DTO da página do pedido: só `status` (da session) e `ticket_url`, e só quando o pedido tem uma session Pix (`payment_method_id === "pix"`); nos outros casos, 404. Sem QR, copia e cola nem expiração: a página do pedido só informa o resultado. |
 | `POST /store/mercadopago/payment-sessions/:id/pix` | Mesmo DTO da rota do cart. |
 
-Nunca saem para o storefront: `card_token`, `issuer_id`, `installments`, `payer`, idempotency keys, `mercadopago_payment_id`, `mercadopago_external_reference`, geração Pix nem status internos fora dos DTOs.
+Nunca saem para o storefront: `card_token`, `issuer_id`, `installments`, `payer`, idempotency keys, IDs do Mercado Pago (`mercadopago_order_id`, `mercadopago_payment_id`), `mercadopago_external_reference`, geração Pix, status nativos do Mercado Pago nem o status da session.

@@ -97,14 +97,16 @@ describe("POST /store/mercadopago/payment-sessions/:id/pix", () => {
     expect(dto).toEqual(
       expect.objectContaining({
         status: "pending",
-        mercadopago_order_id: "ORD_PIX_A",
         qr_code: "000201",
         qr_code_base64: "iVBOR",
         ticket_url: "https://ticket",
         expires_at: "2026-09-26T12:00:00.000-03:00",
       })
     )
-    expect(JSON.stringify(dto)).not.toMatch(/buyer@example|12345678909|pix-key|base-key/)
+    expect(typeof dto.charge_ref).toBe("string")
+    expect(JSON.stringify(dto)).not.toMatch(
+      /buyer@example|12345678909|pix-key|base-key|ORD_PIX_A|action_required|waiting_transfer/
+    )
   })
 
   it("passes 'regenerate' only when explicitly requested", async () => {
@@ -127,7 +129,8 @@ describe("POST /store/mercadopago/payment-sessions/:id/pix", () => {
       ...PREPARED_DATA,
       mercadopago_pix_action: "prepare",
     })
-    expect(second.res.json.mock.calls[0][0].mercadopago_order_id).toBe("ORD_PIX_A")
+    // Same charge → same opaque reference, so the Review does not reopen the QR.
+    expect(second.res.json.mock.calls[0][0].charge_ref).toBe(first.res.json.mock.calls[0][0].charge_ref)
   })
 
   it("does not update an already authorized (paid) session", async () => {

@@ -2,6 +2,7 @@
 
 import { sdk } from "@lib/config"
 import medusaError from "@lib/util/medusa-error"
+import { FetchError } from "@medusajs/js-sdk"
 import { HttpTypes } from "@medusajs/types"
 import { revalidateTag } from "next/cache"
 import { redirect } from "next/navigation"
@@ -288,14 +289,11 @@ export type PixChargeStatus =
   | "charged_back"
   | "unknown"
 
+// charge_ref is an opaque reference of the current charge (changes when the
+// charge is regenerated); it is not a Mercado Pago id.
 export type PixCharge = {
   status: PixChargeStatus
-  session_status: string
-  mercadopago_order_id?: string
-  order_status?: string
-  order_status_detail?: string
-  payment_status?: string
-  payment_status_detail?: string
+  charge_ref?: string
   qr_code?: string
   qr_code_base64?: string
   ticket_url?: string
@@ -324,8 +322,14 @@ export async function preparePixPayment(
     .catch(medusaError)
 }
 
+export type CartPixPoll =
+  | { cart_completed: false; charge: PixCharge }
+  | { cart_completed: true }
+
 // Read-only: current state of the cart's Pix charge. Never creates one.
-export async function retrieveCartPixPayment(cartId: string): Promise<PixCharge> {
+// Once the cart is completed (e.g. the webhook completed it while the buyer
+// is still on the Review) the backend answers 410 with no data.
+export async function retrieveCartPixPayment(cartId: string): Promise<CartPixPoll> {
   const headers = {
     ...(await getAuthHeaders()),
   }
@@ -336,7 +340,14 @@ export async function retrieveCartPixPayment(cartId: string): Promise<PixCharge>
       headers,
       cache: "no-store",
     })
-    .catch(medusaError)
+    .then((charge): CartPixPoll => ({ cart_completed: false, charge }))
+    .catch((err) => {
+      if (err instanceof FetchError && err.status === 410) {
+        return { cart_completed: true } as const
+      }
+
+      return medusaError(err)
+    })
 }
 
 export async function applyPromotions(codes: string[]) {

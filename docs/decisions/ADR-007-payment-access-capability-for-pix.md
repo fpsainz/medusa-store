@@ -53,7 +53,7 @@ Marcadores de origem: [../README.md](../README.md#convenções). Além deles, **
 8. **Revogação.** Na troca de Pix para outro método na mesma session, além da revalidação a cada leitura.
 9. **Atualização de status.** Polling por Server Action. Sem SSE nem WebSocket.
 10. **Escopo.** Cartão e débito não usam a capability. Boleto poderá reutilizar o núcleo com política própria (a deadline não pode ser "agora + duração", porque o vencimento é ajustado para dia útil [MCP 2026-09-27]). Um link de resgate de uso único para boleto não faz parte desta decisão.
-11. **`carts/:id/pix`.** Deixa de responder depois de `completed_at`, e seu DTO perde os campos internos (`mercadopago_order_id` e status nativos).
+11. **`carts/:id/pix`.** Depois de `completed_at` responde **410 sem corpo** [decisão humana 2026-09-27]: o painel da Review ainda aberta (cenário B') esconde a cobrança e libera "Place order", que devolve o pedido existente. O DTO perde `mercadopago_order_id`, `session_status` e os status nativos; a UI usa uma referência opaca (`charge_ref`).
 12. **Migração.** `GET /store/mercadopago/orders/:id/pix` e `retrievePixPayment` permanecem até o novo fluxo passar no E2E sandbox e então são removidos.
 
 ### Parâmetros [decisão humana 2026-09-27]

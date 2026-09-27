@@ -58,7 +58,8 @@ function buildReq(cartGraphData: unknown[]) {
       },
     },
   }
-  const res: any = { json: jest.fn(), setHeader: jest.fn() }
+  const res: any = { json: jest.fn(), setHeader: jest.fn(), end: jest.fn() }
+  res.status = jest.fn(() => res)
   return { req, res, graph }
 }
 
@@ -94,9 +95,13 @@ describe("GET /store/mercadopago/carts/:id/pix", () => {
     expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store")
     const dto = res.json.mock.calls[0][0]
     expect(dto.status).toBe("pending")
-    expect(dto.order_status).toBe("action_required")
     expect(dto.qr_code).toBe("000201")
-    expect(JSON.stringify(dto)).not.toMatch(/buyer@example|pix-key/)
+    expect(Object.keys(dto).every((key) =>
+      ["status", "charge_ref", "qr_code", "qr_code_base64", "ticket_url", "expires_at"].includes(key)
+    )).toBe(true)
+    expect(JSON.stringify(dto)).not.toMatch(
+      /buyer@example|pix-key|ORD_PIX_A|PAY_PIX_A|action_required|waiting_transfer/
+    )
   })
 
   it("reports expired when Mercado Pago has expired the charge", async () => {
@@ -149,10 +154,7 @@ describe("GET /store/mercadopago/carts/:id/pix", () => {
     await GET(req, res)
 
     expect(orderGetMock).not.toHaveBeenCalled()
-    expect(res.json.mock.calls[0][0]).toEqual(
-      expect.objectContaining({ status: "unknown", session_status: "pending" })
-    )
-    expect(res.json.mock.calls[0][0].qr_code).toBeUndefined()
+    expect(JSON.parse(JSON.stringify(res.json.mock.calls[0][0]))).toStrictEqual({ status: "unknown" })
   })
 
   it("falls back to the stored state when Mercado Pago is unreachable", async () => {
@@ -164,6 +166,46 @@ describe("GET /store/mercadopago/carts/:id/pix", () => {
     await GET(req, res)
 
     expect(res.json.mock.calls[0][0].status).toBe("pending")
+  })
+
+  describe("completed cart", () => {
+    function completedCart(sessions: unknown[]) {
+      return [{ id: "cart_123", completed_at: "2026-09-27T12:00:00.000Z", payment_collection: { payment_sessions: sessions } }]
+    }
+
+    it("answers 410 with no body for a completed cart, even with a pending Pix session", async () => {
+      const { req, res } = buildReq(
+        completedCart([{ id: "payses_pix", provider_id: "pp_mercadopago", status: "pending", data: STORED_PIX_DATA }])
+      )
+
+      await GET(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(410)
+      expect(res.end).toHaveBeenCalledWith()
+      expect(res.json).not.toHaveBeenCalled()
+      expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store")
+      expect(orderGetMock).not.toHaveBeenCalled()
+    })
+
+    it("answers 410 for a completed cart whose session was already authorized", async () => {
+      const { req, res } = buildReq(
+        completedCart([{ id: "payses_pix", provider_id: "pp_mercadopago", status: "authorized", data: STORED_PIX_DATA }])
+      )
+
+      await GET(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(410)
+      expect(res.json).not.toHaveBeenCalled()
+    })
+
+    it("answers 410 for a completed cart without any Pix session", async () => {
+      const { req, res } = buildReq(completedCart([]))
+
+      await GET(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(410)
+      expect(res.json).not.toHaveBeenCalled()
+    })
   })
 
   it("returns 404 for an unknown cart", async () => {
