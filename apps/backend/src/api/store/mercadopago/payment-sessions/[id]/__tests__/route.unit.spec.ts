@@ -170,6 +170,72 @@ describe("mercadopago payment session route", () => {
     expect(updateInput.data).toEqual({ existing: true, cart_id: "cart_123" })
   })
 
+  describe("payment_type_id (card type from the Payment Brick)", () => {
+    const CARD_BODY = {
+      cart_id: "cart_123",
+      card_token: "cardtoken_123",
+      payment_method_id: "visa",
+      installments: 1,
+    }
+
+    it.each(["credit_card", "debit_card"])("accepts payment_type_id=%p", async (paymentTypeId) => {
+      const { req, updatePaymentSession } = buildReq({ body: { ...CARD_BODY, payment_type_id: paymentTypeId } })
+
+      await POST(req, { json: jest.fn() } as any)
+
+      const [[updateInput]] = updatePaymentSession.mock.calls
+      expect(updateInput.data.payment_type_id).toBe(paymentTypeId)
+    })
+
+    it.each([["prepaid_card"], ["foo"], ["creditCard"], ["debitCard"], [""], [null], [1]])(
+      "rejects payment_type_id=%p without updating the session",
+      async (paymentTypeId) => {
+        const { req, updatePaymentSession } = buildReq({ body: { ...CARD_BODY, payment_type_id: paymentTypeId } })
+
+        await expect(POST(req, { json: jest.fn() } as any)).rejects.toThrow(
+          /payment_type_id must be credit_card or debit_card/
+        )
+        expect(updatePaymentSession).not.toHaveBeenCalled()
+      }
+    )
+
+    it("drops a card type left over from an earlier card when a new card is submitted without one", async () => {
+      const { req, updatePaymentSession } = buildReq({
+        body: CARD_BODY,
+        paymentSession: {
+          id: "payses_123",
+          amount: 100,
+          currency_code: "BRL",
+          provider_id: "pp_mercadopago",
+          payment_collection_id: PAYMENT_COLLECTION_ID,
+          data: { existing: true, payment_type_id: "debit_card" },
+        },
+      })
+
+      await POST(req, { json: jest.fn() } as any)
+
+      const [[updateInput]] = updatePaymentSession.mock.calls
+      expect(updateInput.data).not.toHaveProperty("payment_type_id")
+      expect(updateInput.data.card_token).toBe("cardtoken_123")
+    })
+
+    it("leaves a Pix update without payment_type_id untouched", async () => {
+      const { req, updatePaymentSession } = buildReq({
+        body: { cart_id: "cart_123", payment_method_id: "pix", payer: { email: "customer@example.com" } },
+      })
+
+      await POST(req, { json: jest.fn() } as any)
+
+      const [[updateInput]] = updatePaymentSession.mock.calls
+      expect(updateInput.data).toEqual({
+        existing: true,
+        cart_id: "cart_123",
+        payment_method_id: "pix",
+        payer: { email: "customer@example.com" },
+      })
+    })
+  })
+
   it("rejects the request when cart_id is missing", async () => {
     const { req } = buildReq({ body: {} })
     const res: any = { json: jest.fn() }

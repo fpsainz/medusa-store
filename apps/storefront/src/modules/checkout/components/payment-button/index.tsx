@@ -173,8 +173,10 @@ const StripePaymentButton = ({
 // they're both `pp_mercadopago`, distinguished only by the session's own
 // stored payment_method_id, not by a different provider_id). This is the
 // single place completeCart is triggered for both: the Payment Brick's
-// onSubmit only saves the payment data to the session, and the Pix Order
-// (and its QR) is created by the provider during completeCart.
+// onSubmit only saves the payment data to the session. The Pix Order (and
+// its QR) is prepared earlier, on the Review step, through
+// POST /store/mercadopago/payment-sessions/:id/pix; completeCart only
+// creates it as a fallback when the session has no Pix Order yet.
 const MercadoPagoPaymentButton = ({
   cart,
   notReady,

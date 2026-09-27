@@ -99,7 +99,10 @@ const MercadoPagoPaymentContainer: React.FC<MercadoPagoPaymentContainerProps> = 
     }
   }, [shouldRenderBrick, paymentProviderId])
 
-  const onSubmit = useCallback(async (rawArgs: any) => {
+  const onSubmit = useCallback(async (
+    rawArgs: any,
+    additionalData?: { paymentTypeId?: string } | null
+  ) => {
     const { formData } = rawArgs as {
       selectedPaymentMethod?: string
       formData: {
@@ -155,6 +158,10 @@ const MercadoPagoPaymentContainer: React.FC<MercadoPagoPaymentContainerProps> = 
       : {
           card_token: formData.token,
           payment_method_id: formData.payment_method_id,
+          // Card type as the Brick classifies the card ("credit_card" /
+          // "debit_card"); it is not part of formData. The backend validates
+          // it and the provider sends it as payment_method.type (ADR-005).
+          payment_type_id: additionalData?.paymentTypeId,
           issuer_id: formData.issuer_id ?? "",
           installments: Number(formData.installments ?? 1),
           transaction_amount: Number(formData.transaction_amount ?? amount),

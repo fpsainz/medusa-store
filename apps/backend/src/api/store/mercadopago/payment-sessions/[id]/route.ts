@@ -1,6 +1,8 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, MedusaError, Modules } from "@medusajs/framework/utils"
 
+import { isCardPaymentType } from "../../../../../modules/mercadopago/service"
+
 // Same identity as apps/backend/src/api/hooks/payment/[provider]/route.ts (see
 // that file's comment): medusa-config.ts has no `id` for this provider, and
 // service.ts identifier is "mercadopago", so the registered token is
@@ -104,6 +106,21 @@ function buildAllowedSessionData(body: Record<string, unknown>): Record<string, 
     allowed.cart_id = body.cart_id
   }
 
+  // Card type from the Payment Brick (additionalData.paymentTypeId), in the
+  // Orders API's own vocabulary. Unlike the other keys, an invalid value is
+  // rejected rather than dropped: silently losing it would only surface later
+  // as a failed authorization.
+  if ("payment_type_id" in body) {
+    if (!isCardPaymentType(body.payment_type_id)) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        "Mercado Pago: payment_type_id must be credit_card or debit_card."
+      )
+    }
+
+    allowed.payment_type_id = body.payment_type_id
+  }
+
   const payer = sanitizePayer(body.payer)
   if (payer && Object.keys(payer).length > 0) {
     allowed.payer = payer
@@ -161,12 +178,20 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   const allowedData = buildAllowedSessionData(body)
 
+  // A new card submission carries its own card type; a type left over from an
+  // earlier card must never be reused for it (the provider then refuses to
+  // authorize instead of charging with a stale type).
+  const previousData: Record<string, unknown> = { ...(paymentSession.data ?? {}) }
+  if (typeof allowedData.card_token === "string" && !("payment_type_id" in allowedData)) {
+    delete previousData.payment_type_id
+  }
+
   const updatedPaymentSession = await paymentModuleService.updatePaymentSession({
     id: paymentSessionId,
     currency_code: paymentSession.currency_code,
     amount: paymentSession.amount,
     data: {
-      ...paymentSession.data,
+      ...previousData,
       ...allowedData,
     },
   })

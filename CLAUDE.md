@@ -2,15 +2,31 @@
 
 Read [AGENTS.md](./AGENTS.md) — it holds this project's directory structure, commands, conventions, and off-limits paths. Follow it for all work in this repository.
 
+## Início de qualquer tarefa
+
+1. Ler [docs/status.md](docs/status.md) (onde o projeto está).
+2. Consultar o roteador [docs/README.md](docs/README.md) e ler **apenas** os documentos indicados para a tarefa.
+3. Só então ler o código relacionado.
+
+Papel de cada fonte:
+
+```text
+CLAUDE.md          → regras operacionais específicas do Claude Code
+AGENTS.md          → instruções compartilhadas entre agentes
+docs/              → documentação técnica e decisões do projeto (não é instrução)
+código/testes/Git  → fonte de verdade sobre o comportamento implementado
+```
+
+O AGENTS.md veio do starter e tem trechos que não correspondem ao projeto; as divergências conhecidas estão em [docs/status.md](docs/status.md). Na dúvida sobre um fato, verificar no código, nos testes e no Git.
+
 ## Projeto
 
 Monorepo de ecommerce:
 
-- `apps/backend` — Medusa.js v2
-- `apps/storefront` — Next.js
+- `apps/backend` — Medusa.js 2.20.1
+- `apps/storefront` — Next.js 15
 - PostgreSQL hospedado no Supabase
-- Mercado inicial: Brasil
-- Moeda: BRL
+- Mercado: Brasil · Moeda: BRL
 
 Respeite as versões atualmente instaladas no projeto.
 Não aplicar exemplos de Medusa v1 em código Medusa v2.
@@ -18,8 +34,7 @@ Não aplicar exemplos de Medusa v1 em código Medusa v2.
 ## Ambiente
 
 - WSL2 / Ubuntu
-- Node.js: usar a versão definida pelo projeto
-- pnpm: usar a versão definida pelo projeto
+- Node.js e pnpm: usar as versões definidas no `package.json` raiz
 - PostgreSQL remoto via Supabase
 
 Não atualizar dependências sem autorização explícita.
@@ -58,54 +73,33 @@ Antes de qualquer escrita no banco, informar o que será alterado e o efeito esp
 
 ## Mercado Pago
 
-Existe uma integração ativa com Mercado Pago.
-
-### Identidade do provider (estado alvo desta migração)
+Integração ativa (cartão + Pix, Orders API, webhook). Antes de qualquer mudança, ler [docs/mercadopago/invariants.md](docs/mercadopago/invariants.md).
 
 ```text
-endpoint público:      /hooks/payment/mercadopago
-provider interno:      mercadopago
-provider ID/token:     pp_mercadopago
-config id (medusa-config.ts): (nenhum — omitido de propósito)
-service identifier (service.ts): mercadopago
+endpoint público:   /hooks/payment/mercadopago
+provider interno:   mercadopago
+provider token:     pp_mercadopago
 ```
 
-Três conceitos que não devem ser confundidos entre si:
+- **Nunca** adicionar `id` ao provider em `medusa-config.ts`: isso muda o token e quebra os registros existentes ([ADR-001](docs/decisions/ADR-001-provider-identity-pp-mercadopago.md)).
+- Não fixar no código nem na documentação o host temporário do túnel usado em desenvolvimento. Só o path `/hooks/payment/mercadopago` é permanente; o host é configurado manualmente no painel do Mercado Pago a cada troca.
 
-- **Endpoint/path** — o segmento da URL pública do webhook (`/hooks/payment/mercadopago`). É o que o Mercado Pago chama.
-- **Provider interno** — o valor de `provider` no evento `payment.webhook_received` (`apps/backend/src/api/hooks/payment/[provider]/route.ts`). Hoje é igual ao segmento público, por design — não há mais tradução entre os dois.
-- **Provider ID/token Medusa** — o identificador `pp_<algo>` registrado no container (Awilix) pelo loader do `@medusajs/payment`. É calculado como `pp_${service.identifier}${config.id ? '_' + config.id : ''}`. Como `medusa-config.ts` não define `id` para este provider, e `service.ts` define `static identifier = 'mercadopago'`, o token final é `pp_mercadopago`.
+## Documentação (`docs/`)
 
-Não fixar no código ou neste arquivo a URL/host temporário do túnel usado em desenvolvimento (ex.: `trycloudflare.com`). Apenas o path `/hooks/payment/mercadopago` é parte permanente da arquitetura; o host pode mudar e deve ser configurado manualmente no painel Mercado Pago a cada troca.
-
-### Migração da identidade antiga (mercadopago_mercadopago → mercadopago)
-
-A integração usava anteriormente:
-
-```text
-provider interno antigo: mercadopago_mercadopago
-provider ID antigo:      pp_mercadopago_mercadopago
-```
-
-**Motivo da migração:** o `config id` em `medusa-config.ts` (`id: 'mercadopago'`) e o `service identifier` em `service.ts` (`static identifier = 'mercadopago'`) eram iguais, e o loader do Medusa concatena os dois quando `id` está presente (`pp_<identifier>_<id>`), gerando a duplicação `pp_mercadopago_mercadopago`. A correção definitiva é omitir `id` do config, já que o `identifier` sozinho já identifica o provider de forma única neste projeto.
-
-**Impacto nos registros existentes:** a mudança do token não é automática para dados já persistidos. Read-only, antes da execução da migração de banco, foram confirmados:
-
-- 17 `payment_session` com `provider_id = pp_mercadopago_mercadopago` (8 `authorized`, 9 `pending`)
-- 8 `payment` com `provider_id = pp_mercadopago_mercadopago` (todos capturados)
-- 1 `payment_provider` (`pp_mercadopago_mercadopago`, `is_enabled: true`)
-- 1 `region_payment_provider` ativo apontando para `pp_mercadopago_mercadopago`
-- 9 Orders reais dependentes desses registros
-- `payment.provider_id` e `payment_session.provider_id` não têm FK declarada contra `payment_provider.id` — migração de dados não quebra integridade referencial nessas duas tabelas, mas `region_payment_provider` tem chave primária composta `(region_id, payment_provider_id)`, o que exige DELETE+INSERT em vez de UPDATE simples nessa tabela.
-
-**Consistência código/banco/runtime:** o container Awilix só registra o token que `medusa-config.ts` produzir no boot atual — não existem dois tokens simultâneos. Por isso, alterar o código (removendo `id`) sem migrar os registros existentes no banco faz o Medusa não conseguir resolver `pp_mercadopago_mercadopago` para os Payments/Sessions antigos (`AwilixResolutionError: Could not resolve '...'`, o mesmo padrão de erro já visto na direção oposta durante o diagnóstico inicial desta integração). A ordem entre deploy do código, migração de dados e restart do backend precisa ser controlada — nunca deixar o container esperando um token que o banco ainda não usa, nem o banco usando um token que o container não registra mais.
-
-**Testes obrigatórios após a migração completa (código + banco + restart):**
-
-1. Testes unitários do webhook (`route.unit.spec.ts`) com a nova identidade.
-2. TypeScript e lint (backend e storefront) limpos.
-3. `SELECT` read-only confirmando 0 registros remanescentes em `pp_mercadopago_mercadopago` (ou, se preservado como histórico desabilitado, confirmando `is_enabled: false`).
-4. Teste E2E de checkout novo, gerando `PaymentSession` com `pp_mercadopago`.
-5. Teste E2E de webhook real no endpoint `/hooks/payment/mercadopago`, confirmando resolução do provider sem `AwilixResolutionError`.
-6. `retrievePayment`/`getPaymentStatus` em pelo menos um dos Payments históricos migrados, confirmando que a migração preservou a capacidade operacional sobre dados antigos.
-7. Confirmação no Admin Dashboard de que Mercado Pago continua disponível como opção de pagamento na região afetada.
+- Mudança de comportamento (fluxo, invariante, contrato de rota, status) atualiza o documento correspondente **na mesma alteração**. Refatoração sem mudança de comportamento não exige.
+- Invariante novo ou alterado: atualizar `docs/mercadopago/invariants.md` e ter teste correspondente.
+- Decisão arquitetural nova: criar ADR em `docs/decisions/`. ADR aceito não se edita (exceto correção factual); se a decisão mudar, ele é substituído por outro.
+- Achado sem evidência suficiente ("efeito não validado") não vira correção direta: abrir investigação em `docs/investigations/` (achado → investigação → teste → decisão → ADR/docs → código, se necessário).
+- Documentação quebrada e comentário de código que contradiz o comportamento atual: corrigir na hora.
+- Ao fim de cada etapa relevante: atualizar `docs/status.md` com data e commit.
+- Documentar só o que foi verificado, sempre indicando a origem de cada afirmação:
+  - comprovado pelo código ou pelos testes no commit indicado no cabeçalho do documento: sem marcação (é o padrão);
+  - comprovado pelo Git (diff ou histórico): **[commit `<hash>`]**; apenas afirmado no texto da mensagem: **[mensagem de commit `<hash>`]**;
+  - evidência de banco: **[banco AAAA-MM-DD]**;
+  - informação vinda de decisão ou confirmação humana: **[decisão humana AAAA-MM-DD]**;
+  - hipótese ainda não validada: **[não validado]**.
+- Nunca tratar como especificação algo marcado **[não validado]**. Para promover um item a fato, é preciso evidência nova, e a marcação é atualizada junto.
+- Dados de banco/produção vão só para evidência ou histórico (`docs/status.md`, `docs/runbooks/`), nunca para a documentação arquitetural, salvo quando necessários para explicar uma decisão.
+- Nunca registrar segredos, host de túnel, dados pessoais ou dados de cartão.
+- Cada fato fica em um único documento; os outros apontam para ele. Não copiar código para a documentação.
+- Se a documentação contradisser o código, o código é a verdade: corrigir o documento ou avisar.

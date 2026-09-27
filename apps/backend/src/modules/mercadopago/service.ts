@@ -9,6 +9,16 @@ type MercadoPagoProviderOptions = {
 
 type PaymentData = Record<string, unknown>
 
+// Card payment types accepted in session.data.payment_type_id, exactly as the
+// Orders API expects them in payment_method.type. Collected from the Payment
+// Brick's additionalData.paymentTypeId (see ADR-005). prepaid_card is
+// deliberately out of this contract.
+export type CardPaymentType = 'credit_card' | 'debit_card'
+
+export function isCardPaymentType(value: unknown): value is CardPaymentType {
+  return value === 'credit_card' || value === 'debit_card'
+}
+
 // Presentation status of a Mercado Pago Pix charge, derived from the Orders
 // API's native order/transaction statuses. It is NOT a Medusa status: the
 // Medusa Payment Session / Payment / Order keep their own states. The native
@@ -860,6 +870,25 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
       )
     }
 
+    // The card type is never inferred (not from payment_method_id, not by
+    // defaulting to credit): a session without it, e.g. one created before
+    // payment_type_id existed, must have its payment data collected again.
+    if (data.payment_type_id === undefined || data.payment_type_id === null) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        'Mercado Pago: the card payment session is missing the card type. Please re-enter your payment information.'
+      )
+    }
+
+    if (!isCardPaymentType(data.payment_type_id)) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        'Mercado Pago: unsupported card payment type. Please re-enter your payment information.'
+      )
+    }
+
+    const paymentTypeId = data.payment_type_id
+
     if (!Number.isInteger(installments) || installments < 1) {
       throw new MedusaError(
         MedusaError.Types.INVALID_DATA,
@@ -897,7 +926,7 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
               payment_method: {
                 id: paymentMethodId,
                 token: cardToken,
-                type: 'credit_card',
+                type: paymentTypeId,
                 installments,
               },
             },

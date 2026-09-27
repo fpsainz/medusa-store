@@ -54,6 +54,7 @@ describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
     const result = await provider.authorizePayment({
       data: {
         payment_method_id: "visa",
+        payment_type_id: "credit_card",
         card_token: "card_token_abc",
         issuer_id: "123",
         installments: 3,
@@ -84,6 +85,89 @@ describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
     )
     expect(result.status).toBe("captured")
     expect(result.data.mercadopago_order_id).toBe("ORD_TEST_1")
+  })
+
+  describe("card payment type (payment_type_id → payment_method.type)", () => {
+    const CARD_DATA = {
+      payment_method_id: "debelo",
+      card_token: "card_token_debit",
+      installments: 1,
+      transaction_amount: 100,
+      cart_id: "cart_debit",
+      payer: { email: "buyer@example.com" },
+    }
+
+    it("sends type debit_card for a debit card session, never credit_card", async () => {
+      mockCreatedOrder()
+      const provider = buildProvider()
+
+      await provider.authorizePayment({ data: { ...CARD_DATA, payment_type_id: "debit_card" } })
+
+      const [[createArgs]] = orderCreateMock.mock.calls
+      expect(createArgs.body.transactions.payments[0].payment_method).toEqual({
+        id: "debelo",
+        token: "card_token_debit",
+        type: "debit_card",
+        installments: 1,
+      })
+    })
+
+    it("refuses a card session without payment_type_id (never falls back to credit_card) and creates no Order", async () => {
+      const provider = buildProvider()
+
+      await expect(provider.authorizePayment({ data: { ...CARD_DATA } })).rejects.toThrow(
+        /missing the card type\. Please re-enter your payment information/
+      )
+
+      expect(orderCreateMock).not.toHaveBeenCalled()
+    })
+
+    it.each(["prepaid_card", "creditCard", "debitCard", "", "foo"])(
+      "refuses payment_type_id=%p and creates no Order",
+      async (paymentTypeId) => {
+        const provider = buildProvider()
+
+        await expect(
+          provider.authorizePayment({ data: { ...CARD_DATA, payment_type_id: paymentTypeId } })
+        ).rejects.toThrow(/unsupported card payment type/)
+
+        expect(orderCreateMock).not.toHaveBeenCalled()
+      }
+    )
+
+    it("treats payment_type_id=null like a missing card type", async () => {
+      const provider = buildProvider()
+
+      await expect(
+        provider.authorizePayment({ data: { ...CARD_DATA, payment_type_id: null } })
+      ).rejects.toThrow(/missing the card type/)
+
+      expect(orderCreateMock).not.toHaveBeenCalled()
+    })
+
+    it("does not require payment_type_id on the Pix path", async () => {
+      orderCreateMock.mockResolvedValue({
+        id: "ORD_PIX_TYPE",
+        status: "action_required",
+        status_detail: "waiting_transfer",
+        total_amount: "100.00",
+        transactions: { payments: [{ id: "PAY_PIX_TYPE", status: "action_required", status_detail: "waiting_transfer" }] },
+      })
+      const provider = buildProvider()
+
+      const result = await provider.authorizePayment({
+        data: {
+          payment_method_id: "pix",
+          transaction_amount: 100,
+          cart_id: "cart_pix_type",
+          payer: { email: "buyer@example.com" },
+        },
+      })
+
+      expect(result.status).toBe("pending_authorization")
+      const [[createArgs]] = orderCreateMock.mock.calls
+      expect(createArgs.body.transactions.payments[0].payment_method).toEqual({ id: "pix", type: "bank_transfer" })
+    })
   })
 
   // TESTE 2 — PRIMEIRA AUTORIZAÇÃO PIX

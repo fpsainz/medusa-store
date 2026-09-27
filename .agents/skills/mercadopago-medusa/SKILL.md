@@ -15,7 +15,7 @@ internal provider:   mercadopago
 provider ID/token:   pp_mercadopago
 ```
 
-Do not confuse the three: the public path, the `provider` value on the `payment.webhook_received` event, and the `pp_<id>` token Medusa registers in the container are three distinct concepts, even when their current values happen to match. See CLAUDE.md ("Mercado Pago" section) for the full migration record — the project previously ran on `mercadopago_mercadopago` / `pp_mercadopago_mercadopago`, a duplication produced by `medusa-config.ts` setting both a provider `id` and a matching `service.ts` `identifier`. Never reintroduce a config `id` for this provider without checking that section first.
+Do not confuse the three: the public path, the `provider` value on the `payment.webhook_received` event, and the `pp_<id>` token Medusa registers in the container are three distinct concepts, even when their current values happen to match. See `docs/decisions/ADR-001-provider-identity-pp-mercadopago.md` for the decision and `docs/runbooks/provider-id-migration.md` for the full migration record — the project previously ran on `mercadopago_mercadopago` / `pp_mercadopago_mercadopago`, a duplication produced by `medusa-config.ts` setting both a provider `id` and a matching `service.ts` `identifier`. Never reintroduce a config `id` for this provider without reading that ADR first. Before any change to this integration, read `docs/mercadopago/invariants.md`.
 
 ## Source of truth
 
