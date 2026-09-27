@@ -5,6 +5,7 @@ import {
   type PaymentAccessPurpose,
   generatePaymentAccessToken,
   hashPaymentAccessToken,
+  isGrantPurgeable,
   isGrantUsable,
   isWellFormedPaymentAccessToken,
   selectGrantsToSupersede,
@@ -87,6 +88,41 @@ class PaymentAccessModuleService extends MedusaService({
 
     await this.revoke(active, reason, now)
     return active.length
+  }
+
+  // Hard-deletes grants that have been expired or revoked for longer than
+  // the retention period, in batches. Idempotent: a second run finds
+  // nothing to delete. Returns only how many rows were removed.
+  async purgeExpiredGrants(input: {
+    retention_ms: number
+    batch_size?: number
+    now?: Date
+  }): Promise<number> {
+    const now = input.now ?? new Date()
+    const batchSize = input.batch_size ?? 500
+    const cutoff = new Date(now.getTime() - input.retention_ms)
+    let deleted = 0
+
+    for (;;) {
+      const candidates = (await this.listPaymentAccessGrants(
+        { $or: [{ expires_at: { $lte: cutoff } }, { revoked_at: { $lte: cutoff } }] },
+        { select: ["id", "expires_at", "revoked_at"], take: batchSize }
+      )) as unknown as Pick<PaymentAccessGrantRecord, "id" | "expires_at" | "revoked_at">[]
+
+      // Re-checked in code so a filter mistake can never delete a usable grant.
+      const ids = candidates
+        .filter((grant) => isGrantPurgeable(grant, now, input.retention_ms))
+        .map((grant) => grant.id)
+
+      if (ids.length > 0) {
+        await this.deletePaymentAccessGrants(ids)
+        deleted += ids.length
+      }
+
+      if (candidates.length < batchSize || ids.length === 0) {
+        return deleted
+      }
+    }
   }
 
   private async supersedeExcessGrants(

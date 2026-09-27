@@ -220,6 +220,7 @@ Banco: 6 grants, todos token_hash hex de 64, nenhum plaintext; 1 superseded, 1 p
 - **Estados no E2E real:** `pending` ✅; `canceled` ✅ (Pix vencido cancelado pelo Mercado Pago); `expired` só pela deadline local ✅. **`approved` e `failed` não reproduzíveis no sandbox** (Pix do checkout não é aprovável: [testing.md](mercadopago/testing.md#pix-no-sandbox)); cobertos só por testes automatizados (`V`, `PAX`).
 - ⚠ **Depende de navegador, não executado:** o Server Action gravar o cookie no browser; a Review reagir ao 410 (esconder a cobrança, liberar "Place order"); a interface da confirmação (modal, polling). Cobertos por `tsc`/lint e pelo teste da fronteira, não por E2E.
 - ✅ `GET /store/mercadopago/orders/:id/pix` e `retrievePixPayment` removidos depois do E2E (commit `refactor(mercadopago): remove legacy Pix order access`).
+- ✅ Limpeza: job diário `cleanup-payment-access-grants` apaga capabilities expiradas ou revogadas há 7 dias ou mais (commit `chore(backend): clean up expired payment access grants`). Testes unitários; filtro conferido read-only no banco (7 grants, 0 elegíveis com 7 dias, 7 com corte em "agora") [banco 2026-09-27]. O job ainda não rodou agendado.
 - 🔍 `carts/:id/pix` (Review) não aplica a deadline local: por alguns minutos depois da deadline pode mostrar o QR enquanto o Mercado Pago ainda diz `pending`. Pendência separada.
 - 🔍 `POST /store/mercadopago/payment-sessions/:id` devolve `payment_session` inteiro, com `data`; `/store/mercadopago/*` não é coberto pelo ADR-006. Pendência separada.
 
@@ -227,7 +228,7 @@ Banco: 6 grants, todos token_hash hex de 64, nenhum plaintext; 1 superseded, 1 p
 
 Não bloqueia nenhuma pendência funcional.
 
-- 🛠 **Lógica de pagamento fora de workflows.** Está toda no provider (`service.ts`, 1144 linhas) e nas rotas; `src/workflows` e `src/subscribers` estão vazios. Contraria o [AGENTS.md](../AGENTS.md). **Não foi decisão deliberada** [decisão humana 2026-09-25].
+- 🛠 **Lógica de pagamento fora de workflows.** Está no provider (`service.ts`) e nas rotas; só a capability de pagamento (ADR-007) usa `src/workflows` e `src/jobs`, e `src/subscribers` está vazio. Contraria o [AGENTS.md](../AGENTS.md). **Não foi decisão deliberada** [decisão humana 2026-09-25].
 - 🛠 Sem CI.
 - 🛠 Sem testes de integração HTTP.
 - 🛠 Storefront só tem o teste da fronteira Pix (`pnpm test`); sem testes de componentes.

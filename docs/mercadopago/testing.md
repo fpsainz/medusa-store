@@ -19,7 +19,8 @@ Resultado em 2026-09-27, commit `3a56150`: **6 suítes, 141 testes, todos passan
 | `api/store/mercadopago/carts/[id]/pix/__tests__/route.unit.spec.ts` | Leitura ao vivo, estados terminais, fallback com o Mercado Pago fora do ar, DTO sem IDs/status nativos, 410 para cart concluído, 404, isolamento por cart |
 | `api/store/mercadopago/payment-access/pix/__tests__/route.unit.spec.ts` | Leitura por capability: DTO por allowlist, order resolvida no servidor, estados (pendente, aprovado, cancelado ao vivo, deadline vencida, Mercado Pago fora do ar), 404 genérico para cada falha, token na query ignorado |
 | `modules/mercadopago/__tests__/pix-access-view.unit.spec.ts` | `toPixAccessDto` por estado e deadline |
-| `modules/payment-access/__tests__/*.unit.spec.ts` | Token opaco, hash, validação, limite por session, corrida de emissões, revogação |
+| `modules/payment-access/__tests__/*.unit.spec.ts` | Token opaco, hash, validação, limite por session, corrida de emissões, revogação, limpeza com retenção de 7 dias (lotes, repetição) |
+| `jobs/__tests__/cleanup-payment-access-grants.unit.spec.ts` | Job de limpeza: chama o workflow e registra só a quantidade |
 | `workflows/payment-access/__tests__/pix-access-binding.unit.spec.ts` | Condições de emissão da capability Pix |
 
 ### Sem cobertura

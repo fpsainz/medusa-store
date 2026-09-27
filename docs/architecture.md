@@ -30,12 +30,13 @@ Mercado Pago ──webhook──> POST /hooks/payment/mercadopago (backend)
 | `src/api/store/mercadopago/payment-sessions/[id]/pix/route.ts` | `POST`: prepara (cria/reutiliza/regenera) a cobrança Pix na etapa Review. |
 | `src/api/store/mercadopago/carts/[id]/pix/route.ts` | `GET`: estado atual da cobrança Pix do cart (polling da Review). Só leitura. |
 | `src/api/store/mercadopago/payment-access/pix/route.ts` | `GET`: dados Pix autorizados por capability (header), sem IDs do cliente. Só leitura. |
-| `src/workflows/payment-access/` | Emissão e revogação da capability Pix. |
+| `src/workflows/payment-access/` | Emissão, revogação e limpeza (`purgeExpiredPaymentAccessWorkflow`) da capability Pix. |
+| `src/jobs/cleanup-payment-access-grants.ts` | Job diário (03:30): apaga capabilities expiradas ou revogadas há mais de 7 dias. |
 | `src/modules/payment-access` | Módulo `paymentAccess` ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md)): tabela `payment_access_grant` com capabilities temporárias de pagamento (só o hash do token), geração, validação, limite por session e revogação (`grants.ts`, `service.ts`); parâmetros da política Pix em `policies.ts`. Migration em `migrations/`, **ainda não aplicada** (ver [status.md](status.md)). |
 | `src/api/store/custom`, `src/api/admin/custom` | Rotas de exemplo do starter (`GET` → 200). |
-| `src/workflows`, `src/subscribers`, `src/jobs`, `src/links` | Vazios (só README do starter). |
+| `src/subscribers`, `src/links` | Vazios (só README do starter). |
 
-**Onde a lógica vive hoje:** no provider e nas rotas, não em workflows. Isso diverge da convenção do [AGENTS.md](../AGENTS.md) e **não foi uma decisão deliberada** [decisão humana 2026-09-25] — está registrado como dívida técnica em [status.md](status.md).
+**Onde a lógica vive hoje:** a do Mercado Pago, no provider e nas rotas, não em workflows; só a capability de pagamento ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md)) usa workflows e um job. Isso diverge da convenção do [AGENTS.md](../AGENTS.md) e **não foi uma decisão deliberada** [decisão humana 2026-09-25] — está registrado como dívida técnica em [status.md](status.md).
 
 ## Storefront (`apps/storefront`)
 

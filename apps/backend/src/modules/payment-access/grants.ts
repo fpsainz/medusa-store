@@ -68,6 +68,24 @@ export function isGrantUsable(
   return expiresAt !== undefined && now.getTime() < expiresAt
 }
 
+// A grant may be deleted only once it has been unusable for the whole
+// retention period: expired more than `retentionMs` ago, or revoked more than
+// `retentionMs` ago. A usable grant (not revoked, not expired) never is.
+export function isGrantPurgeable(
+  grant: Pick<PaymentAccessGrantRecord, "expires_at" | "revoked_at">,
+  now: Date,
+  retentionMs: number
+): boolean {
+  const cutoff = now.getTime() - retentionMs
+  const expiresAt = toTime(grant.expires_at)
+  const revokedAt = toTime(grant.revoked_at)
+
+  return (
+    (expiresAt !== undefined && expiresAt <= cutoff) ||
+    (revokedAt !== undefined && revokedAt <= cutoff)
+  )
+}
+
 // Active grants beyond the newest `maxActive` (newest first by created_at,
 // then id as a stable tie-breaker). Revoking these after every issuance keeps
 // the count bounded even when issuances race: each call trims to the same

@@ -3,6 +3,7 @@ import {
   type PaymentAccessGrantRecord,
   generatePaymentAccessToken,
   hashPaymentAccessToken,
+  isGrantPurgeable,
   isGrantUsable,
   isWellFormedPaymentAccessToken,
   selectGrantsToSupersede,
@@ -93,6 +94,30 @@ describe("isGrantUsable", () => {
       isGrantUsable(grant({ expires_at: "2026-09-27T11:59:59.000Z" }), "pix_payment_view", NOW)
     ).toBe(false)
     expect(isGrantUsable(grant({ expires_at: "not-a-date" }), "pix_payment_view", NOW)).toBe(false)
+  })
+})
+
+describe("isGrantPurgeable (7-day retention)", () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const RETENTION = 7 * DAY
+  const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString()
+
+  it("never purges a usable grant", () => {
+    expect(isGrantPurgeable({ expires_at: "2026-09-27T13:00:00.000Z", revoked_at: null }, NOW, RETENTION)).toBe(false)
+  })
+
+  it("keeps a grant expired less than 7 days ago", () => {
+    expect(isGrantPurgeable({ expires_at: ago(6 * DAY), revoked_at: null }, NOW, RETENTION)).toBe(false)
+  })
+
+  it("purges a grant expired 7 days ago or more", () => {
+    expect(isGrantPurgeable({ expires_at: ago(7 * DAY), revoked_at: null }, NOW, RETENTION)).toBe(true)
+    expect(isGrantPurgeable({ expires_at: ago(8 * DAY), revoked_at: null }, NOW, RETENTION)).toBe(true)
+  })
+
+  it("purges a grant revoked more than 7 days ago, keeps one revoked recently", () => {
+    expect(isGrantPurgeable({ expires_at: ago(6 * DAY), revoked_at: ago(8 * DAY) }, NOW, RETENTION)).toBe(true)
+    expect(isGrantPurgeable({ expires_at: ago(DAY), revoked_at: ago(2 * DAY) }, NOW, RETENTION)).toBe(false)
   })
 })
 

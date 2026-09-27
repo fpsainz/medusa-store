@@ -13,6 +13,7 @@ Specs (caminhos relativos a `apps/backend/src/`):
 `R` = `api/utils/__tests__/redact-mercadopago-data.unit.spec.ts` ·
 `PA` = `modules/payment-access/__tests__/*.unit.spec.ts` ·
 `WB` = `workflows/payment-access/__tests__/pix-access-binding.unit.spec.ts` ·
+`J` = `jobs/__tests__/cleanup-payment-access-grants.unit.spec.ts` ·
 `PAX` = `api/store/mercadopago/payment-access/pix/__tests__/route.unit.spec.ts` ·
 `V` = `modules/mercadopago/__tests__/pix-access-view.unit.spec.ts`
 
@@ -51,6 +52,7 @@ Specs (caminhos relativos a `apps/backend/src/`):
 27. **A capability é opaca e só o hash é persistido.** Token = `pat_` + 32 bytes aleatórios em base64url, nunca JWT. A tabela guarda só o SHA-256 (`token_hash`). Um valor fora do formato é recusado antes de qualquer consulta. — `modules/payment-access/grants.ts`, `service.ts`. Teste: `PA`. [ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)
 28. **Uma capability só vale para o próprio propósito, sem revogação e antes de `expires_at`;** qualquer falha devolve `null`, sem motivo. — `isGrantUsable`, `findUsableGrant`. Teste: `PA`.
 29. **No máximo 3 capabilities Pix ativas por payment session:** cada emissão revoga as mais antigas (`superseded`), e emissões concorrentes convergem para o mesmo conjunto. — `issueGrant`, `selectGrantsToSupersede`, `PIX_PAYMENT_VIEW_POLICY`. Teste: `PA`.
+38. **Capabilities só são apagadas depois de 7 dias inutilizáveis:** expiradas ou revogadas há 7 dias ou mais. Uma capability utilizável nunca é apagada (a regra é conferida em código mesmo depois do filtro do banco). O job diário `cleanup-payment-access-grants` apaga em lotes, é idempotente e registra só a quantidade removida. — `isGrantPurgeable`, `purgeExpiredGrants`, `purgeExpiredPaymentAccessWorkflow`, `jobs/cleanup-payment-access-grants.ts`, `PAYMENT_ACCESS_RETENTION_MS`. Testes: `PA`, `J`.
 30. **A capability Pix só é emitida pelo prepare, a partir da posse do `cart_id` com o cart aberto.** O workflow relê cart e session e só emite quando: cart existe e não tem `completed_at`; a session pertence ao payment collection do cart, é `pp_mercadopago` e Pix, e já tem cobrança; há `mercadopago_pix_expires_at`; e deadline + 15 min ainda está no futuro. Expira em deadline + 15 min. Não existe rota pública de emissão. — `pix-access-binding.ts`, `issuePixPaymentAccessWorkflow`, `payment-sessions/[id]/pix/route.ts`. Testes: `WB`, `PX`.
 31. **O token nunca vai no corpo da resposta:** só nos headers `x-payment-access-token`/`x-payment-access-expires-at`. Falha na emissão não falha o prepare. — `api/utils/pix-payment-access.ts`. Teste: `PX`.
 32. **Trocar a session de Pix para outro método revoga as capabilities dela** (`payment_method_changed`). Falha na revogação é registrada e não falha a atualização. — `payment-sessions/[id]/route.ts`, `revokePaymentSessionAccessWorkflow`. Teste: `PS`.

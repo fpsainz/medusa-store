@@ -11,6 +11,11 @@ export type PaymentAccessPolicy = {
   grace_ms: number
 }
 
+// Expired or revoked grants are kept this long (audit/debug) before the
+// cleanup job deletes them; the token itself is never stored (human
+// decision of 2026-09-27, ADR-007).
+export const PAYMENT_ACCESS_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
 // Pix policy (ADR-007; parameters are a human decision of 2026-09-27): the
 // capability lives until the Pix deadline + 15 minutes, with no other cap,
 // and at most 3 are active per session.
