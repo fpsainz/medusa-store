@@ -27,7 +27,8 @@ Resultado em 2026-09-27, commit `3a56150`: **6 suítes, 141 testes, todos passan
 
 - `refundPayment`, `cancelPayment`, `retrievePayment`, `getPaymentStatus`, `capturePayment`, `initiatePayment` (nenhuma menção no spec do provider).
 - Um teste que falhe se `id` for adicionado ao provider em `medusa-config.ts`.
-- Testes de integração HTTP (não existem), testes no storefront (não existem) e CI (não existe).
+- Testes de integração HTTP (não existem) e CI (não existe).
+- No storefront só existe o teste da fronteira servidor → cliente do Pix (`apps/storefront/src/lib/util/__tests__/pix-client.test.mjs`, `pnpm test` em `apps/storefront`, `node --test` sem dependência nova; exige Node ≥ 22.12). Componentes, Server Actions e cookies não têm teste automatizado.
 
 ## Checagem de tipos
 

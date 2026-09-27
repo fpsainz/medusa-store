@@ -3,6 +3,11 @@
 import { sdk } from "@lib/config"
 import medusaError from "@lib/util/medusa-error"
 import { FetchError } from "@medusajs/js-sdk"
+import {
+  type PixCharge,
+  readIssuedPaymentAccess,
+  toClientPixCharge,
+} from "@lib/util/pix-client"
 import { HttpTypes } from "@medusajs/types"
 import { revalidateTag } from "next/cache"
 import { redirect } from "next/navigation"
@@ -13,6 +18,7 @@ import {
   getCartId,
   removeCartId,
   setCartId,
+  setPaymentAccessToken,
 } from "./cookies"
 import { getRegion } from "./regions"
 import { getLocale } from "./locale-actions"
@@ -274,35 +280,18 @@ export async function updateMercadoPagoPaymentSession(
     .catch(medusaError)
 }
 
-// State of the cart's Mercado Pago Pix charge as returned by the backend.
-// `status` is a presentation status derived from Mercado Pago's native
-// statuses (also returned, unchanged); it is not a Medusa Order status.
-export type PixChargeStatus =
-  | "processing"
-  | "pending"
-  | "approved"
-  | "expired"
-  | "canceled"
-  | "failed"
-  | "rejected"
-  | "refunded"
-  | "charged_back"
-  | "unknown"
-
-// charge_ref is an opaque reference of the current charge (changes when the
-// charge is regenerated); it is not a Mercado Pago id.
-export type PixCharge = {
-  status: PixChargeStatus
-  charge_ref?: string
-  qr_code?: string
-  qr_code_base64?: string
-  ticket_url?: string
-  expires_at?: string
-}
+// State of the cart's Mercado Pago Pix charge. `status` is a presentation
+// status derived from Mercado Pago's native statuses; it is not a Medusa
+// Order status. Defined with the client boundary in @lib/util/pix-client.
+export type { PixCharge, PixChargeStatus } from "@lib/util/pix-client"
 
 // Asks the backend to create (or reuse) the Mercado Pago Pix charge of the
 // cart's payment session. Idempotent: repeated calls return the same charge
 // while it is still payable. `regenerate` replaces an expired/invalid one.
+//
+// The backend also issues a Pix payment capability (ADR-007) in the response
+// headers. It is stored here, server-side, in an HttpOnly cookie; this Server
+// Action returns only the allowlisted charge, never the capability.
 export async function preparePixPayment(
   paymentSessionId: string,
   cartId: string,
@@ -310,16 +299,26 @@ export async function preparePixPayment(
 ): Promise<PixCharge> {
   const headers = {
     ...(await getAuthHeaders()),
+    // Anything but application/json: the SDK then returns the raw Response,
+    // whose headers carry the capability.
+    accept: "*/*",
   }
 
-  return sdk.client
-    .fetch<PixCharge>(`/store/mercadopago/payment-sessions/${paymentSessionId}/pix`, {
+  const resp = await sdk.client
+    .fetch<Response>(`/store/mercadopago/payment-sessions/${paymentSessionId}/pix`, {
       method: "POST",
       body: { cart_id: cartId, regenerate },
       headers,
       cache: "no-store",
     })
     .catch(medusaError)
+
+  const access = readIssuedPaymentAccess(resp.headers)
+  if (access) {
+    await setPaymentAccessToken(access.token, access.expiresAt)
+  }
+
+  return toClientPixCharge(await resp.json())
 }
 
 export type CartPixPoll =
@@ -335,12 +334,12 @@ export async function retrieveCartPixPayment(cartId: string): Promise<CartPixPol
   }
 
   return sdk.client
-    .fetch<PixCharge>(`/store/mercadopago/carts/${cartId}/pix`, {
+    .fetch<unknown>(`/store/mercadopago/carts/${cartId}/pix`, {
       method: "GET",
       headers,
       cache: "no-store",
     })
-    .then((charge): CartPixPoll => ({ cart_completed: false, charge }))
+    .then((body): CartPixPoll => ({ cart_completed: false, charge: toClientPixCharge(body) }))
     .catch((err) => {
       if (err instanceof FetchError && err.status === 410) {
         return { cart_completed: true } as const

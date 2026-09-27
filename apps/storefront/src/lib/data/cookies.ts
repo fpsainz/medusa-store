@@ -115,6 +115,29 @@ export const removePendingCustomer = async () => {
   })
 }
 
+// Pix payment capability (ADR-007). HttpOnly, so no browser script can read
+// it; it is only ever read by storefront server code and sent to the backend
+// in a header. The __Host- prefix (Secure, Path=/, no Domain) is only
+// possible over HTTPS, i.e. in production.
+const PAYMENT_ACCESS_COOKIE =
+  process.env.NODE_ENV === "production" ? "__Host-payment_access" : "_payment_access"
+
+export const setPaymentAccessToken = async (token: string, expiresAt: Date) => {
+  const cookies = await nextCookies()
+  cookies.set(PAYMENT_ACCESS_COOKIE, token, {
+    maxAge: Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000)),
+    httpOnly: true,
+    path: "/",
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  })
+}
+
+export const getPaymentAccessToken = async (): Promise<string | undefined> => {
+  const cookies = await nextCookies()
+  return cookies.get(PAYMENT_ACCESS_COOKIE)?.value
+}
+
 export const getCartId = async () => {
   const cookies = await nextCookies()
   return cookies.get("_medusa_cart_id")?.value

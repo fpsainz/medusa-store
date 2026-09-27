@@ -47,6 +47,9 @@ Baseado no starter Next.js do Medusa. Partes específicas do Mercado Pago:
 | `src/lib/constants.tsx` | `paymentInfoMap` e `isMercadoPago()` (compara com `"pp_mercadopago"`). Mantém entradas do starter (Stripe, PayPal). |
 | `src/lib/data/cart.ts` | `updateMercadoPagoPaymentSession`, `preparePixPayment`, `retrieveCartPixPayment`, `placeOrder` (`sdk.store.cart.complete`). |
 | `src/lib/data/orders.ts` | `retrievePixPayment` (`GET /store/mercadopago/orders/:id/pix`). |
+| `src/lib/util/pix-client.ts` | Fronteira servidor → cliente do Pix: allowlist do que um Client Component recebe (`toClientPixCharge`) e leitura da capability nos headers do prepare (`readIssuedPaymentAccess`). Puro, testado com `node --test`. |
+| `src/lib/data/cookies.ts` | Cookies HttpOnly, inclusive o da capability Pix (`__Host-payment_access` em produção, `_payment_access` em HTTP). |
+| `src/lib/data/payment-access.ts` | `server-only`: `readPixPaymentAccess` lê o Pix com a capability do cookie, por `fetch` nativo com o token em header. |
 | `src/modules/checkout/components/mercadopago-payment-container` | Renderiza o Payment Brick (cartão crédito/débito + Pix, `locale: pt-BR`, até 12 parcelas); `onSubmit` só grava dados na session. |
 | `src/modules/checkout/components/review` | Mostra o `PixPaymentPanel` quando a session tem `payment_method_id === "pix"` e bloqueia o botão até a cobrança estar pagável. |
 | `src/modules/checkout/components/payment-button` | `MercadoPagoPaymentButton`: único ponto que chama `placeOrder` para cartão e Pix. |

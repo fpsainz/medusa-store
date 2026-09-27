@@ -12,6 +12,7 @@
     "build": "next build",
     "start": "next start -p 8000",
     "lint": "next lint",
+    "test": "node --test --experimental-strip-types \"src/**/__tests__/*.test.mjs\"",
     "analyze": "ANALYZE=true next build"
   },
   "dependencies": {
