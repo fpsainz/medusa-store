@@ -1,16 +1,16 @@
 # Status do projeto
 
-> Status: vigente · Última verificação: 2026-09-27 · Commit: `f2ceb7c` · Branch: `rebuild/mercadopago-pix-storefront`
+> Status: vigente · Última verificação: 2026-09-28 · Commit: `6e4579b` · Branch: `rebuild/mercadopago-pix-storefront`
 
 Retrato atual. Atualizar ao fim de cada etapa relevante. Histórico fica no Git, não aqui. Marcadores de origem: [README.md](README.md#convenções).
 
-**Próxima sessão começa por:** verificação no navegador do que o E2E HTTP não cobre (seção "Capability de pagamento"). Depois: decidir como validar Pix pago pelo checkout no sandbox (ver [limitação do sandbox](mercadopago/testing.md#pix-no-sandbox)) → cenários B e B' depois do hardening. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
+**Próxima sessão começa por:** push da branch (aguarda confirmação). Depois: decidir como validar Pix pago pelo checkout no sandbox (ver [limitação do sandbox](mercadopago/testing.md#pix-no-sandbox)) → cenários B e B' depois do hardening. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
 
 Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 🔍 investigação aberta · 🛠 dívida técnica · ❌ não existe · — sem registro
 
 ## Git
 
-- Branch atual `rebuild/mercadopago-pix-storefront`. Este status cobre as alterações até o commit `f2ceb7c`. Commits posteriores só de documentação ficam registrados no histórico do Git (`git log main..HEAD`). Commits relevantes sobre a `main`: `81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001, `01991a0` documentação do E2E do webhook, `c6beff1` redação do `data` do Mercado Pago na Store API, `1749309` resposta mínima de `orders/:id/pix`, `780b740` prazo explícito do Pix, `87587f6` `carts/:id/pix` fechado após a conclusão, `86b8ed0` módulo `paymentAccess`, `93abe1f` emissão/revogação da capability, `d5a4b23` leitura por capability, `9884ba5` cookie no storefront, `4de8ace` confirmação por capability, `f2ceb7c` correção do `next dev`. O Pix não está na `main`.
+- Branch atual `rebuild/mercadopago-pix-storefront`. Este status cobre as alterações até o commit `6e4579b`. Commits posteriores só de documentação ficam registrados no histórico do Git (`git log main..HEAD`). Commits relevantes sobre a `main`: `81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001, `01991a0` documentação do E2E do webhook, `c6beff1` redação do `data` do Mercado Pago na Store API, `1749309` resposta mínima de `orders/:id/pix`, `780b740` prazo explícito do Pix, `87587f6` `carts/:id/pix` fechado após a conclusão, `86b8ed0` módulo `paymentAccess`, `93abe1f` emissão/revogação da capability, `d5a4b23` leitura por capability, `9884ba5` cookie no storefront, `4de8ace` confirmação por capability, `f2ceb7c` correção do `next dev`, `6b92141` remoção de `orders/:id/pix`, `536d00e` limpeza de capabilities, `5ccd353` janela de pagamento na Review, `6e4579b` status real na capability. O Pix não está na `main`.
 - Existe a branch local `recovery/base-81f5caf`, que aponta para `81f5caf`.
 
 ## Matriz de evidências
@@ -218,11 +218,34 @@ Banco: 6 grants, todos token_hash hex de 64, nenhum plaintext; 1 superseded, 1 p
   - O pedido #87 (deadline ~5 min antes) já respondia **`canceled`**, só status. O check automatizado esperava `expired` e falhou; o comportamento é o do invariante 34 (status final do Mercado Pago é mantido, sem artefatos).
   - 16 min depois da deadline: o Mercado Pago mostrava **`canceled`** para o probe; as duas capabilities (deadline + 15 min) → 404 genérico.
 - **Estados no E2E real:** `pending` ✅; `canceled` ✅ (Pix vencido cancelado pelo Mercado Pago); `expired` só pela deadline local ✅. **`approved` e `failed` não reproduzíveis no sandbox** (Pix do checkout não é aprovável: [testing.md](mercadopago/testing.md#pix-no-sandbox)); cobertos só por testes automatizados (`V`, `PAX`).
-- ⚠ **Depende de navegador, não executado:** o Server Action gravar o cookie no browser; a Review reagir ao 410 (esconder a cobrança, liberar "Place order"); a interface da confirmação (modal, polling). Cobertos por `tsc`/lint e pelo teste da fronteira, não por E2E.
+- Os testes que dependem de navegador estão na seção seguinte (executados depois, com o código em `6e4579b`).
+
+#### E2E no navegador (2026-09-27/28, código em `6e4579b`)
+
+Fonte: Chromium 153 headless controlado por DevTools Protocol (só em 127.0.0.1), contra o storefront em **build de produção** (`next build` + `next start`, cópia isolada sem `.env`), o backend em execução e a Orders API sandbox. Pedido `order_01M3JHS6GK94AHXYRVSMEKG7W7` (guest). O `next dev` não foi usado como evidência. O preenchimento do Payment Brick (iframe do Mercado Pago) foi substituído pelo mesmo payload do `onSubmit` via HTTP; o resto aconteceu no navegador.
+
+```text
+A — Review + cookie                                                               11/11 ✅
+  painel Pix e modal com copia e cola após o prepare pelo Server Action
+  cookie __Host-payment_access criado pelo servidor: HttpOnly, Secure, SameSite=Lax, Path=/, host-only
+  token ausente de document.cookie, URL, DOM, corpos de resposta (HTML, RSC, Server Actions) e URLs de requisição
+B — cart concluído com a Review aberta                                             5/5 ✅
+  cart concluído por outra requisição (Store API), não pelo webhook (Pix do checkout não é pagável no sandbox)
+  carts/:id/pix → 410 sem corpo; a Review mostra "already completed", esconde QR/copia e cola e libera "Place order"
+C — confirmação                                                                    12/12 ✅
+  "Awaiting payment" + modal com QR/copia e cola/ticket (payment_window_closed=false)
+  polling pelo Server Action (2 chamadas em 16 s); token/nome do cookie ausentes do DOM e das respostas
+  deadline + 2 min: API status=pending, payment_window_closed=true, sem QR/ticket;
+                    página "Time to pay this Pix has ended", sem botão de QR
+  deadline + 12 min: Mercado Pago canceled → API status=canceled; página "Pix canceled", nada pagável
+```
+
+- **Limitação:** `approved` **não** foi reproduzido: um Pix criado pelo checkout não pode ser pago no sandbox ([testing.md](mercadopago/testing.md#pix-no-sandbox)). Continua coberto só por testes automatizados (`V`, `PAX`). Não houve E2E de pagamento aprovado.
+- **Limitação:** a passagem para `payment_window_closed=true` foi observada **depois de recarregar** a página, não como transição ao vivo do polling (o polling da página para depois de 180 × 5 s = 15 min, antes da deadline de 1 h).
 - ✅ `GET /store/mercadopago/orders/:id/pix` e `retrievePixPayment` removidos depois do E2E (commit `refactor(mercadopago): remove legacy Pix order access`).
 - ✅ Limpeza: job diário `cleanup-payment-access-grants` apaga capabilities expiradas ou revogadas há 7 dias ou mais (commit `chore(backend): clean up expired payment access grants`). Testes unitários; filtro conferido read-only no banco (7 grants, 0 elegíveis com 7 dias, 7 com corte em "agora") [banco 2026-09-27]. O job ainda não rodou agendado.
-- ✅ `carts/:id/pix` e o prepare deixam de devolver QR/ticket a partir da deadline local, mantendo o status do provider e sinalizando `payment_window_closed` (`5ccd353`, [ADR-008](decisions/ADR-008-pix-payment-window-hides-artifacts.md)). Testes unitários; ⚠ não reexecutado no sandbox nem no navegador.
-- ✅ A rota da capability mantém o status real do provider e devolve `payment_window_closed`; a confirmação exibe por `status` + janela ([ADR-009](decisions/ADR-009-payment-access-keeps-provider-status.md)). Testes unitários; ⚠ não reexecutado no sandbox nem no navegador.
+- ✅ `carts/:id/pix` e o prepare deixam de devolver QR/ticket a partir da deadline local, mantendo o status do provider e sinalizando `payment_window_closed` (`5ccd353`, [ADR-008](decisions/ADR-008-pix-payment-window-hides-artifacts.md)). Testes unitários; ⚠ na Review, depois da deadline, não observado no sandbox nem no navegador.
+- ✅ A rota da capability mantém o status real do provider e devolve `payment_window_closed`; a confirmação exibe por `status` + janela ([ADR-009](decisions/ADR-009-payment-access-keeps-provider-status.md)). Testes unitários e E2E no navegador (`pending` + janela fechada, `canceled`; `approved` não reproduzível).
 - 🔍 Oferecer um novo Pix na confirmação quando a janela fecha sem pagamento: não existe caminho depois da conclusão do cart; exige decisão (ADR-009).
 - 🔍 `POST /store/mercadopago/payment-sessions/:id` devolve `payment_session` inteiro, com `data`; `/store/mercadopago/*` não é coberto pelo ADR-006. Pendência separada.
 
