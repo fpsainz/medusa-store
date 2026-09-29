@@ -1,6 +1,6 @@
 # INV-005: cancelar um pedido Medusa com o Pix ainda pendente
 
-> Status: concluída · Aberta em: 2026-09-29 · Concluída em: 2026-09-29 · Commit: `0821822` (correção não commitada) · Decisão: [ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md)
+> Status: concluída · Aberta em: 2026-09-29 · Concluída em: 2026-09-29 · Commit: `0821822` (E2E com a correção ainda fora de commit; correção publicada em `12c5ff6` [commit `12c5ff6`]) · Decisão: [ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md)
 
 Marcadores de origem: [../README.md](../README.md#convenções). **[MCP 2026-09-29]** indica documentação oficial ou dados do MCP do Mercado Pago (conta/aplicação de teste) consultados nessa data. **[core 2.20.1]** indica código do Medusa 2.20.1 instalado em `node_modules`. **[sandbox 2026-09-29]** indica resultado observado na Orders API sandbox nesta investigação.
 
@@ -89,7 +89,7 @@ Registro, sem mudança: a Order MP foi criada com `expiration_time: "PT1H"`; dea
 
 ⚠ **Inconsistência confirmada** entre Medusa e Mercado Pago antes da correção: o pedido Medusa foi cancelado, e a cobrança Pix continuou `action_required/waiting_transfer`, pagável, e exibida com QR na confirmação até o fim da janela. Não é defeito do core (o `cancelOrderWorkflow` só trata Payments por projeto); era uma lacuna da integração no cenário A.
 
-## Correção (não commitada, sobre `0821822`)
+## Correção (sobre `0821822`, publicada em `12c5ff6`)
 
 > Atualização 2026-09-29: o hook abaixo continua existindo, mas `POST /admin/orders/:id/cancel` passou a cancelar o Pix **antes** do `cancelOrderWorkflow` (workflow `cancel-order-with-pending-pix`, [ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)), porque uma recusa do hook deixava a collection `canceled` ([INV-006](INV-006-payment-collection-rollback.md)). A lógica descrita aqui foi movida para `src/workflows/steps/cancel-pending-pix-charge.ts`, sem mudança de comportamento.
 

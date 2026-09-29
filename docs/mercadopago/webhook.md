@@ -56,9 +56,13 @@ order.processed
 
 ## Validação
 
+**Resumo:** ✅ correlação validada por testes unitários · ✅ webhook real pós-hardening validado: #83 (2026-09-27) para a correlação, #92 (2026-09-29) para o fluxo assíncrono de ponta a ponta · ✅ duplicidade · ✅ correlação negativa [decisão humana 2026-09-29: consolidação das evidências existentes, sem novo E2E].
+
 - ✅ Correlação validada por teste unitário (ver [Testes](#testes)).
 - ✅ Correlação validada por webhook real depois do hardening, em 2026-09-27, com o código `3a56150`. Foram cobertos: Pix pago completando o cart só pelo webhook, notificação tardia de cart já completo sem efeito, Order paga sem session respondendo 503 sem atingir outra session, e `order.action_required` sem autorizar. Evidência em [../status.md](../status.md#webhook-real-depois-do-hardening-2026-09-27-código-3a56150).
 - ✅ Aprovação de um Pix criado pelo checkout validada por webhook real em 2026-09-29: com o nome de cobrança `APRO` (ADR-010), o sandbox aprova a Order. `order.action_required` e `order.processed` chegaram com correlação exata e 200 ([E2E-B-PRIME-2026-09-29](../investigations/E2E-B-PRIME-2026-09-29.md); como testar em [testing.md](testing.md#pix-no-sandbox)).
+- ✅ Fluxo assíncrono de ponta a ponta validado por webhook real em 2026-09-29, pedido #92: Pix criado pelo checkout e aprovado no sandbox; o webhook concluiu o cart antes de qualquer Place order (`processPaymentWorkflow` → `completeCartAfterPaymentStep` → `completeCartWorkflow`), com 1 Payment capturado, 1 Capture, collection `completed` e 1 Order Medusa, sem `POST /complete` ([E2E-B-2026-09-29](../investigations/E2E-B-2026-09-29.md)).
+- ⚠ `notifications_history` do MCP do Mercado Pago: voltou vazio em 2026-09-29 mesmo depois de webhooks reais entregues, mas mais tarde, no mesmo dia, com o MCP conectado à conta de teste [decisão humana 2026-09-29], ele mostrou notificações reais das Orders de teste (#97–#101: horário, tentativas e código HTTP da resposta) [MCP 2026-09-29] ([INV-006](../investigations/INV-006-payment-collection-rollback.md)). Limites: trunca o ID da Order e não mostra o `action` nem o corpo, então não prova sozinho qual evento chegou a qual Order; a evidência de processamento continua sendo o registro dos testes reais do projeto.
 
 ## Por que o HMAC usa `data.id` em minúsculas
 

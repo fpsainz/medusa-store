@@ -1,6 +1,6 @@
 # ADR-012: Cancelar o Pix pendente no hook `orderCanceled` do `cancelOrderWorkflow`
 
-> Status: substituído em parte pelo [ADR-013](ADR-013-cancel-order-wrapper-cancels-pix-first.md) (o Pix passa a ser cancelado antes do `cancelOrderWorkflow`; este hook continua como rede de segurança) · Data: 2026-09-29 · Commits: correção sobre `0821822`, ainda não commitada
+> Status: substituído em parte pelo [ADR-013](ADR-013-cancel-order-wrapper-cancels-pix-first.md) (o Pix passa a ser cancelado antes do `cancelOrderWorkflow`; este hook continua como rede de segurança) · Data: 2026-09-29 · Commits: `12c5ff6` (publicado junto com o ADR-013; o hook entrou já delegando ao step compartilhado) [commit `12c5ff6`]
 
 Investigação e evidências: [INV-005](../investigations/INV-005-cancel-order-with-pending-pix.md). Regras: invariantes 8 e 45 em [../mercadopago/invariants.md](../mercadopago/invariants.md). Escolha do mecanismo [decisão humana 2026-09-29].
 

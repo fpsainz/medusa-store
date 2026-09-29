@@ -8,7 +8,7 @@
 cd apps/backend && pnpm run test:unit
 ```
 
-Resultado em 2026-09-29, com o workflow de cancelamento que cancela o Pix antes do core ([ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)) sobre `0821822` (não commitado): **18 suítes, 336 testes, todos passando.** Antes, com só o hook ([ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md)): 15 suítes, 310 testes. Em `0821822`: 13 suítes, 285 testes.
+Resultado em 2026-09-29, com o workflow de cancelamento que cancela o Pix antes do core ([ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)), commit `12c5ff6`: **18 suítes, 336 testes, todos passando.** Antes, com só o hook ([ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md)): 15 suítes, 310 testes. Em `0821822`: 13 suítes, 285 testes.
 
 | Spec (em `apps/backend/src/`) | Cobre |
 |---|---|

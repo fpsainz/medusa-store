@@ -1,6 +1,6 @@
 # ADR-013: Cancelar o Pix pendente antes do `cancelOrderWorkflow` (workflow wrapper na rota do Admin)
 
-> Status: aceito (não commitado) · Data: 2026-09-29 · Commits: correção sobre `0821822`, ainda não commitada
+> Status: aceito · Data: 2026-09-29 · Commits: `12c5ff6`
 
 Substitui o [ADR-012](ADR-012-cancel-pending-pix-on-order-cancel.md) no ponto em que o Pix é cancelado. O mecanismo de cancelamento no Mercado Pago e o hook `orderCanceled` continuam os do ADR-012. Investigação e evidências: [INV-006](../investigations/INV-006-payment-collection-rollback.md). Regras: invariantes 45 e 46 em [../mercadopago/invariants.md](../mercadopago/invariants.md). Escolha da opção C [decisão humana 2026-09-29].
 

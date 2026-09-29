@@ -1,6 +1,6 @@
 # ADR-011: Contrato de reembolso do provider Mercado Pago
 
-> Status: aceito (não commitado) · Data: 2026-09-29 · Commits: correção sobre `fb5d9a0`, ainda não commitada
+> Status: aceito · Data: 2026-09-29 · Commits: `0821822`
 
 Investigação e evidências: [INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md). Regras garantidas pelo código: invariantes 42–44 em [../mercadopago/invariants.md](../mercadopago/invariants.md). **[MCP 2026-09-29]** indica documentação oficial do Mercado Pago consultada pelo MCP `search_documentation` (MLB) nessa data.
 

@@ -1,6 +1,6 @@
 # INV-006: Payment Collection `canceled` depois de um `cancelOrderWorkflow` revertido
 
-> Status: concluída · Aberta em: 2026-09-29 · Concluída em: 2026-09-29 · Commit: `0821822` (correção da INV-005/ADR-012 e do ADR-013 não commitada) · Decisão: [ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)
+> Status: concluída · Aberta em: 2026-09-29 · Concluída em: 2026-09-29 · Commit: `12c5ff6` (correção da INV-005/ADR-012 e do ADR-013; o E2E da correção rodou com o mesmo código, antes do commit) · Decisão: [ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)
 
 Marcadores de origem: [../README.md](../README.md#convenções). **[core 2.20.1]** indica código do Medusa 2.20.1 instalado em `node_modules` (`@medusajs/core-flows`, `@medusajs/payment`, `@medusajs/orchestration`, `@medusajs/workflows-sdk`, `@medusajs/framework`, `@medusajs/utils`, `@mikro-orm/core` 6.6.14). **[sandbox 2026-09-29]** indica leitura da Orders API sandbox. **[MCP 2026-09-29]** indica dados ou documentação do MCP do Mercado Pago (conta de teste).
 
