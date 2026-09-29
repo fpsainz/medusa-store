@@ -8,7 +8,7 @@
 cd apps/backend && pnpm run test:unit
 ```
 
-Resultado em 2026-09-29, com a correção do reembolso ([INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md)) sobre `fb5d9a0` (não commitada): **13 suítes, 285 testes, todos passando.** Antes dela, em `fb5d9a0`: 12 suítes, 263 testes.
+Resultado em 2026-09-29, com o workflow de cancelamento que cancela o Pix antes do core ([ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)) sobre `0821822` (não commitado): **18 suítes, 336 testes, todos passando.** Antes, com só o hook ([ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md)): 15 suítes, 310 testes. Em `0821822`: 13 suítes, 285 testes.
 
 | Spec (em `apps/backend/src/`) | Cobre |
 |---|---|
@@ -19,6 +19,11 @@ Resultado em 2026-09-29, com a correção do reembolso ([INV-004](../investigati
 | `api/store/mercadopago/carts/[id]/pix/__tests__/route.unit.spec.ts` | Leitura ao vivo, estados terminais, fallback com o Mercado Pago fora do ar, DTO sem IDs/status nativos, janela de pagamento (antes/depois da deadline, status real mantido), 410 para cart concluído, 404, isolamento por cart |
 | `api/store/mercadopago/payment-access/pix/__tests__/route.unit.spec.ts` | Leitura por capability: DTO por allowlist, order resolvida no servidor, estados (pendente, aprovado, cancelado ao vivo, deadline vencida, Mercado Pago fora do ar), 404 genérico para cada falha, token na query ignorado |
 | `modules/mercadopago/__tests__/pix-access-view.unit.spec.ts` | `toPixAccessDto` por estado e deadline |
+| `modules/mercadopago/__tests__/pix-cancel.unit.spec.ts` | Ação `cancel` do `updatePayment` (cancelamento do pedido): pendente cancelado com a key `sha256(<pix key>:cancel)`, pago recusado, não pagável sem cancelar, desconhecido recusado, erros da API propagados, cartão recusado (invariante 45) |
+| `workflows/steps/__tests__/cancel-pending-pix-charge.unit.spec.ts` | Step compartilhado: só o Pix pendente é cancelado, uma vez, pela ação `cancel`; nada para sem session, cartão (inclusive capturado), Pix autorizado ou já cancelado; pago (corrida do #95), status desconhecido, falha no `GET` e recusa 409 relançados com o motivo; ambiguidade recusada |
+| `workflows/__tests__/cancel-order-with-pending-pix.unit.spec.ts` | Workflow wrapper com o engine real, `useQueryGraphStep` e `cancelValidateOrder` reais e o core substituído por um step que registra a execução e chama o hook: sem Pix → só o core; Pix pendente → cancelado antes do core, e o hook não chama de novo; pago/falha de leitura/status desconhecido/ambiguidade → erro sem executar o core; pedido não cancelável → nem Pix nem core; cartão capturado → só o core; retry idempotente. Uma mutação (core antes do Pix) derruba 5 dos 11 testes |
+| `api/admin/orders/[id]/cancel/__tests__/route.unit.spec.ts` | Rota sobrescrita: não desliga a autenticação padrão; chama o wrapper com `order_id`/`canceled_by`; responde `{ order }` com `req.queryConfig.fields`; erro do workflow propaga sem ler nem responder |
+| `workflows/hooks/__tests__/order-canceled.unit.spec.ts` | Hook `orderCanceled` (rede de segurança): registro, seleção da session Pix pendente, nenhuma ação fora dela, ambiguidade recusada, erros relançados. O rollback real do workflow está nos E2E da INV-005 e da INV-006 |
 | `modules/mercadopago/__tests__/refund.unit.spec.ts` | `refundPayment`: valor como `BigNumberInput`, idempotency key por reembolso, total sem body × parcial com `transactions`, recusas antes da chamada, erro da API propagado (invariantes 42–44). Mock do SDK; nenhum reembolso real |
 | `modules/payment-access/__tests__/*.unit.spec.ts` | Token opaco, hash, validação, limite por session, corrida de emissões, revogação, limpeza com retenção de 7 dias (lotes, repetição) |
 | `jobs/__tests__/cleanup-payment-access-grants.unit.spec.ts` | Job de limpeza: chama o workflow e registra só a quantidade |

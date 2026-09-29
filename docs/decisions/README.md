@@ -19,6 +19,8 @@ Só viram ADR decisões com evidência no código ou no Git. O que não foi deci
 | [ADR-009](ADR-009-payment-access-keeps-provider-status.md) | A leitura por capability mantém o status do provider e sinaliza a janela à parte | Aceito | 2026-09-27 |
 | [ADR-010](ADR-010-pix-payer-name-from-billing-address.md) | Nome do pagador do Pix derivado do endereço de cobrança do cart | Aceito | 2026-09-29 |
 | [ADR-011](ADR-011-mercadopago-refund-contract.md) | Contrato de reembolso do provider Mercado Pago (valor, idempotency key por reembolso, total × parcial) | Aceito (não commitado) | 2026-09-29 |
+| [ADR-012](ADR-012-cancel-pending-pix-on-order-cancel.md) | Cancelar o Pix pendente no hook `orderCanceled` do `cancelOrderWorkflow` | Substituído em parte pelo ADR-013 (o hook continua como rede de segurança) | 2026-09-29 |
+| [ADR-013](ADR-013-cancel-order-wrapper-cancels-pix-first.md) | Cancelar o Pix pendente antes do `cancelOrderWorkflow` (workflow wrapper na rota do Admin) | Aceito (não commitado) | 2026-09-29 |
 
 As datas são as dos commits em que a decisão entrou no código; para um ADR proposto, a data da proposta.
 

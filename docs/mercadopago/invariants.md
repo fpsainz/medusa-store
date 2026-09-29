@@ -16,6 +16,11 @@ Specs (caminhos relativos a `apps/backend/src/`):
 `J` = `jobs/__tests__/cleanup-payment-access-grants.unit.spec.ts` ·
 `PAX` = `api/store/mercadopago/payment-access/pix/__tests__/route.unit.spec.ts` ·
 `V` = `modules/mercadopago/__tests__/pix-access-view.unit.spec.ts` ·
+`PC` = `modules/mercadopago/__tests__/pix-cancel.unit.spec.ts` ·
+`H` = `workflows/hooks/__tests__/order-canceled.unit.spec.ts` ·
+`ST` = `workflows/steps/__tests__/cancel-pending-pix-charge.unit.spec.ts` ·
+`CW` = `workflows/__tests__/cancel-order-with-pending-pix.unit.spec.ts` ·
+`AC` = `api/admin/orders/[id]/cancel/__tests__/route.unit.spec.ts` ·
 `RF` = `modules/mercadopago/__tests__/refund.unit.spec.ts`
 
 ## Identidade
@@ -27,14 +32,14 @@ Specs (caminhos relativos a `apps/backend/src/`):
 2. **O cliente nunca escreve campos `mercadopago_*`, `status`, QR/ticket, expiração nem idempotency keys.** A rota de update aceita só a allowlist de `buildAllowedSessionData`; o `payer` enviado pelo cliente é reduzido a `email` + `identification.{type, number}` (o nome do pagador Pix é acrescentado pelo servidor: invariante 40). — `payment-sessions/[id]/route.ts`. Teste: `PS`.
 3. **Toda rota que recebe `payment_session_id` + `cart_id` confere a posse:** a session precisa pertencer ao `payment_collection` do cart informado e ao provider `pp_mercadopago`. — rotas `payment-sessions/[id]` e `payment-sessions/[id]/pix`. Testes: `PS`, `PX`.
 4. **Atualizar a session nunca autoriza nem captura.** `updatePayment` e as rotas de update/prepare não chamam `authorizePayment` nem `cart.complete`. — `service.ts`, rotas. Testes: `PS`, `PX`, `S`.
-5. **`mercadopago_pix_action` é transitório:** removido no início de `updatePayment`, nunca persistido. A rota de update comum o descarta pela allowlist. — `service.ts`. Teste: `S` (lifecycle Review).
+5. **`mercadopago_pix_action` é transitório:** removido no início de `updatePayment`, nunca persistido. A rota de update comum o descarta pela allowlist. Valores: `prepare`/`regenerate` (rota de prepare) e `cancel` (só o step `cancel-pending-pix-charge`, usado pelo workflow `cancel-order-with-pending-pix` e pelo hook `orderCanceled`). — `service.ts`. Testes: `S` (lifecycle Review), `PC`, `ST`.
 40. **O nome do pagador do Pix vem somente do `billing_address` do cart, lido no servidor pela rota de update, e só para sessions Pix.** A rota lê `billing_address.first_name`/`last_name` na mesma consulta da verificação de posse e grava em `session.data.payer` apenas valores não vazios (aparados); `first_name`/`last_name` enviados pelo cliente são descartados. Numa session que não é Pix, qualquer nome no `payer` (inclusive herdado de uma seleção Pix anterior) é removido. Sem `payer`, nenhum é criado. — `payment-sessions/[id]/route.ts` (`getBillingName`, `withPayerName`). Teste: `PS`. [ADR-010](../decisions/ADR-010-pix-payer-name-from-billing-address.md)
 
 ## Pix
 
 6. **A cobrança Pix é criada na Review, pela rota `prepare`,** não pelo botão "Place order". `authorizePayment` só cria a Order como fallback, quando não há `mercadopago_order_id`. — `preparePixOrder`, `authorizePix`. Teste: `S`. [ADR-003](../decisions/ADR-003-pix-charge-created-at-review.md)
 7. **Uma cobrança Pix paga nunca é descartada, substituída nem regenerada.** `invalidatePixOrder` lança `NOT_ALLOWED`, `preparePixOrder` devolve a Order paga como está, a rota `prepare` não chama o provider se a session já está `authorized`, e o storefront só oferece regenerar em `expired`/`canceled`/`failed`/`rejected`. Testes: `S`, `PX`.
-8. **Nenhuma Order Pix fica pagável sem uma session:** ao trocar de método (`updatePayment`) ou remover a session (`deletePayment`), a Order pendente é cancelada na Orders API. Teste: `S` (`deletePayment`, lifecycle).
+8. **Nenhuma Order Pix fica pagável sem uma session:** ao trocar de método (`updatePayment`) ou remover a session (`deletePayment`), a Order pendente é cancelada na Orders API. Teste: `S` (`deletePayment`, lifecycle). O cancelamento do pedido Medusa com o Pix pendente é coberto pelo invariante 45.
 9. **Status Pix desconhecido nunca vira `pending`:** `normalizePixStatus` → `unknown`, e `resolvePixStatus` lança `UNEXPECTED_STATE`. Teste: `S`.
 10. **O valor da Order Pix precisa bater com o da session** (comparação em 2 casas decimais) para reutilizar (`preparePixOrder`) ou autorizar (`reauthorizePixOrder`, que lança `INVALID_DATA` se divergir). Teste: `S`.
 11. **Idempotency key do Pix:** derivada da key base + valor + "geração". Cada substituição incrementa a geração, então uma Order nova nunca reaproveita a key da anterior. Cancelamento usa `sha256(<pix key>:cancel)`. — `getPixIdempotencyKey`, `createPixOrder`, `invalidatePixOrder`. Teste: `S`.
@@ -80,6 +85,11 @@ Detalhes em [webhook.md](webhook.md). Teste de todos os itens abaixo: `W`.
 ## Tipo do cartão
 
 23. **`payment_method.type` do cartão vem somente de `payment_type_id`** (`credit_card` ou `debit_card`, coletado de `additionalData.paymentTypeId`). O tipo nunca é inferido nem tem fallback para `credit_card`. Ausente ou inválido → `authorizePayment` recusa sem criar Order. A rota recusa valores fora do contrato, e `prepaid_card` fica fora. — `service.ts` (`isCardPaymentType`), `payment-sessions/[id]/route.ts`. Testes: `S`, `PS`. [ADR-005](../decisions/ADR-005-card-payment-type-from-brick.md)
+
+## Cancelamento do pedido
+
+45. **Cancelar um pedido Medusa com Pix pendente cancela a Order Pix antes do core, ou não cancela o pedido.** O step `cancel-pending-pix-charge` age só sobre a session `pp_mercadopago` + Pix + `pending_authorization` + `mercadopago_order_id` do pedido (mais de uma → erro), via `updatePaymentSession` com a ação `cancel`: lê a Order MP; paga → `NOT_ALLOWED`; status desconhecido → `UNEXPECTED_STATE`; já não pagável → nada; pendente → `POST /cancel` com `sha256(<pix key>:cancel)`; session termina `canceled`. No workflow `cancel-order-with-pending-pix` ele roda depois de `cancelValidateOrder` e **antes** de `cancelOrderWorkflow`: qualquer erro chega ao chamador sem que o core altere pedido ou payment collection, e o Pix cancelado nunca é "descancelado" se o core falhar depois. Cartão, Pix autorizado (o core reembolsa o Payment) e pedidos sem session seguem só o core. O hook `orderCanceled` chama a mesma função do step (`cancelPendingPixChargeForOrder`) como rede de segurança para chamadas diretas ao `cancelOrderWorkflow` (lá, um erro reverte o cancelamento, mas a collection fica `canceled`: INV-006); depois do wrapper ele não encontra Pix pendente e não chama o Mercado Pago de novo. — `workflows/steps/cancel-pending-pix-charge.ts`, `workflows/cancel-order-with-pending-pix.ts`, `workflows/hooks/order-canceled.ts`, `service.ts` (`cancelPixOrderForOrderCancellation`). Testes: `ST`, `CW`, `H`, `PC`. [ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md), [ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)
+46. **`POST /admin/orders/:id/cancel` executa o workflow `cancel-order-with-pending-pix`,** não o `cancelOrderWorkflow` direto. A rota do projeto sobrescreve a do core (mesmo caminho e método; o `src/` do projeto é registrado depois), com o mesmo input (`order_id`, `canceled_by = actor_id`), a mesma resposta (`{ order }` com `req.queryConfig.fields`) e sem desligar a autenticação padrão do `/admin`. — `api/admin/orders/[id]/cancel/route.ts`. Teste: `AC`. [ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)
 
 ## Captura
 

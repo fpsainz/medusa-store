@@ -620,8 +620,12 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
   // Pending charges are cancelled through the Orders API; charges already in
   // a terminal state need nothing. A paid charge is never silently discarded
   // (that would leave a captured Pix without any session): the caller gets
-  // an error instead.
-  private async invalidatePixOrder(data: PaymentData, knownDisplay?: PixDisplayStatus): Promise<void> {
+  // an error instead. Returns the Orders API response when a cancellation was
+  // sent, undefined otherwise.
+  private async invalidatePixOrder(
+    data: PaymentData,
+    knownDisplay?: PixDisplayStatus
+  ): Promise<Awaited<ReturnType<Order['cancel']>> | undefined> {
     const orderId = data.mercadopago_order_id as string
     const display = knownDisplay ?? (await this.fetchPixDisplayStatus(orderId))
 
@@ -633,7 +637,7 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
     }
 
     if (display !== 'pending' && display !== 'processing') {
-      return
+      return undefined
     }
 
     const pixKey =
@@ -641,12 +645,53 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
         ? data.mercadopago_pix_idempotency_key
         : orderId
 
-    await this.orderClient.cancel({
+    return this.orderClient.cancel({
       id: orderId,
       requestOptions: {
         idempotencyKey: createHash('sha256').update(`${pixKey}:cancel`).digest('hex'),
       },
     })
+  }
+
+  // The Medusa order holding this still-pending Pix is being cancelled
+  // (cancel-order-with-pending-pix workflow before the core, ADR-013; or
+  // cancelOrderWorkflow's orderCanceled hook, ADR-012). The Order is read
+  // right before acting: a paid charge throws NOT_ALLOWED, so the order is
+  // not cancelled instead of leaving a paid Pix on a cancelled order; a charge that can no longer be paid is left as it is; a payable one
+  // is cancelled on Mercado Pago. The session ends 'canceled', with the
+  // Order's real status in its data.
+  private async cancelPixOrderForOrderCancellation(data: PaymentData): Promise<any> {
+    if (!hasPixOrderData(data)) {
+      return { data }
+    }
+
+    const order = await this.orderClient.get({ id: data.mercadopago_order_id as string })
+    const payment = order.transactions?.payments?.[0]
+    const refreshed = this.buildPixOrderData(data, order, payment)
+    const display = normalizePixStatus({
+      orderStatus: order.status,
+      orderStatusDetail: order.status_detail,
+      paymentStatus: payment?.status,
+      paymentStatusDetail: payment?.status_detail,
+    })
+
+    // An unrecognized status is never taken as safe to leave behind
+    // (invariant 9): the order cancellation is refused instead.
+    if (display === 'unknown') {
+      throw new MedusaError(
+        MedusaError.Types.UNEXPECTED_STATE,
+        `Mercado Pago: unrecognized Pix order status "${order.status ?? payment?.status ?? ''}".`
+      )
+    }
+
+    const canceled = await this.invalidatePixOrder(refreshed, display)
+
+    return {
+      status: 'canceled',
+      data: canceled
+        ? this.buildPixOrderData(refreshed, canceled, canceled.transactions?.payments?.[0])
+        : refreshed,
+    }
   }
 
   // Review-time preparation of the Pix charge. Reuses the session's Pix
@@ -895,6 +940,11 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
   // - 'prepare': create the Pix Order, or reuse the attached one while it is
   //   still payable for the same amount.
   // - 'regenerate': replace the attached Pix Order unless it has been paid.
+  // - 'cancel': set only by the cancel-pending-pix-charge step (the
+  //   cancel-order-with-pending-pix workflow and the orderCanceled hook),
+  //   never by a store route: the Medusa order is being cancelled, so the
+  //   pending Pix Order is cancelled too (see
+  //   cancelPixOrderForOrderCancellation).
   async updatePayment(input: any): Promise<any> {
     const { mercadopago_pix_action: pixAction, ...data } = this.getDataObject(input)
     const amount = this.getAmount(input?.amount ?? data.amount ?? 0, 'payment amount')
@@ -918,7 +968,7 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
       return { data: this.withoutPixOrder(nextData) }
     }
 
-    if (pixAction !== 'prepare' && pixAction !== 'regenerate') {
+    if (pixAction !== 'prepare' && pixAction !== 'regenerate' && pixAction !== 'cancel') {
       throw new MedusaError(
         MedusaError.Types.INVALID_DATA,
         'Mercado Pago: unsupported Pix action.'
@@ -930,6 +980,10 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
         MedusaError.Types.INVALID_DATA,
         'Mercado Pago: the payment session is not a Pix payment.'
       )
+    }
+
+    if (pixAction === 'cancel') {
+      return this.cancelPixOrderForOrderCancellation(nextData)
     }
 
     return this.preparePixOrder(nextData, input, pixAction === 'regenerate')

@@ -36,6 +36,10 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 | `apps/backend/src/api/store/mercadopago/payment-sessions/[id]/pix/route.ts` | Prepara/regenera a cobrança Pix. |
 | `apps/backend/src/api/store/mercadopago/carts/[id]/pix/route.ts` | Estado da cobrança Pix do cart (polling). |
 | `apps/backend/src/workflows/payment-access/` | Emissão (`issuePixPaymentAccessWorkflow`, regra em `pix-access-binding.ts`) e revogação (`revokePaymentSessionAccessWorkflow`) da capability Pix. |
+| `apps/backend/src/api/admin/orders/[id]/cancel/route.ts` | Sobrescreve `POST /admin/orders/:id/cancel` do core para executar o workflow abaixo; mesma entrada, resposta e autenticação ([ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)). |
+| `apps/backend/src/workflows/cancel-order-with-pending-pix.ts` | Workflow de cancelamento de pedido: `cancelValidateOrder` → cancela o Pix pendente → `cancelOrderWorkflow.runAsStep` ([ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)). |
+| `apps/backend/src/workflows/steps/cancel-pending-pix-charge.ts` | Step compartilhado: seleciona o Pix pendente do pedido e o cancela pela ação `cancel` do provider. |
+| `apps/backend/src/workflows/hooks/order-canceled.ts` | Hook `orderCanceled` do `cancelOrderWorkflow`: rede de segurança para chamadas diretas ao workflow, com a mesma função do step (`cancelPendingPixChargeForOrder`) ([ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md)). |
 | `apps/backend/src/api/utils/pix-payment-access.ts` | Anexa a capability emitida aos headers da resposta do prepare. |
 | `apps/backend/src/api/store/mercadopago/payment-access/pix/route.ts` | Leitura do Pix autorizada pela capability. |
 | `apps/backend/src/modules/mercadopago/pix-access-view.ts` | `toPixAccessDto`: allowlist por estado e deadline. |
@@ -54,7 +58,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 ## Fluxo: Pix
 
 1. Brick `onSubmit` com `formData.payment_method_id === "pix"` → mesma rota do passo 2 do cartão, com `payment_method_id: "pix"`, `amount`, `currency_code`, `cart_id`, `payer`.
-2. Na Review, `PixPaymentPanel` chama `POST /store/mercadopago/payment-sessions/:id/pix` uma vez por session. A rota injeta o campo transitório `mercadopago_pix_action` (`prepare` ou `regenerate`) e chama `updatePaymentSession` → `updatePayment` → `preparePixOrder`:
+2. Na Review, `PixPaymentPanel` chama `POST /store/mercadopago/payment-sessions/:id/pix` uma vez por session. A rota injeta o campo transitório `mercadopago_pix_action` (`prepare` ou `regenerate`; `cancel` é reservado ao cancelamento do pedido, pelo step `cancel-pending-pix-charge`) e chama `updatePaymentSession` → `updatePayment` → `preparePixOrder`:
    - Order Pix existente, pagável e com o mesmo valor → reutiliza.
    - Já paga → devolve como está (nunca substitui).
    - Caso contrário → cancela a anterior (se pendente) e cria outra com a próxima "geração" de idempotency key.
@@ -74,6 +78,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 - `updatePayment` sem ação, com Order Pix anexada e session que deixou de ser Pix → cancela a Order Pix (se pendente) e remove os campos Pix.
 - `deletePayment` (session removida, provider trocado ou total do cart alterado) → mesma invalidação.
 - Order Pix já paga nunca é descartada: lança `NOT_ALLOWED`.
+- **Cancelamento do pedido Medusa com Pix pendente** (cenário A, sem Payment): o `cancelOrderWorkflow` do core não chama o provider e, se revertido depois de `updatePaymentCollectionStep`, deixa a collection `canceled` ([INV-006](../investigations/INV-006-payment-collection-rollback.md)). Por isso `POST /admin/orders/:id/cancel` executa `cancel-order-with-pending-pix`: valida o pedido como o core, cancela o Pix pendente pelo provider (ação `cancel` → `invalidatePixOrder`) e só então roda o `cancelOrderWorkflow`. Pix já pago sem webhook processado, ou falha ao ler/cancelar no Mercado Pago → o cancelamento é recusado antes do core (pedido e collection intactos). Pix com Payment capturado → o core reembolsa, sem ação Pix. Session termina `canceled`, e a confirmação mostra o Pix cancelado. O hook `orderCanceled` usa a mesma função do step (`cancelPendingPixChargeForOrder`) para chamadas diretas ao workflow. Invariantes 45 e 46, [ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md) (substitui em parte o [ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md)), evidências na [INV-005](../investigations/INV-005-cancel-order-with-pending-pix.md) e na [INV-006](../investigations/INV-006-payment-collection-rollback.md).
 
 ## Discriminação cartão × Pix (`isPixSession` / `getPixSignals`)
 

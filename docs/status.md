@@ -4,7 +4,7 @@
 
 Retrato atual. Atualizar ao fim de cada etapa relevante. Histórico fica no Git, não aqui. Marcadores de origem: [README.md](README.md#convenções).
 
-**Próxima sessão começa por:** push da branch (aguarda confirmação). O [ADR-010](decisions/ADR-010-pix-payer-name-from-billing-address.md) está commitado em `fb5d9a0` [commit `fb5d9a0`]. Correção do reembolso ([INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md), [ADR-011](decisions/ADR-011-mercadopago-refund-contract.md)) implementada sobre `fb5d9a0` e validada no sandbox em 2026-09-29; não commitada. O E2E B' foi confirmado ([E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md)) e o B não foi reproduzido ([E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md)). Pendências do item 3 da prioridade alta: B e a Order órfã da INV-003, nenhuma com ação definida. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
+**Próxima sessão começa por:** registrar o hash do commit da correção do cancelamento (INV-005/ADR-012 e [INV-006](investigations/INV-006-payment-collection-rollback.md)/[ADR-013](decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)) nos cabeçalhos que ainda dizem "não commitado"; decidir o commit da consolidação do webhook (`mercadopago/webhook.md` e o item 3 de Alta) e da linha de status do ADR-011, que ficaram fora desse commit.
 
 Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 🔍 investigação aberta · 🛠 dívida técnica · ❌ não existe · — sem registro
 
@@ -197,6 +197,23 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
    - Observação, não bug: o tempo de aprovação com `APRO` varia (~3,8 s, ~93 s, ~3,5 s); a causa não foi determinada.
 
 ### Média
+
+- ✅ **Cancelar pedido Medusa com Pix pendente** ([INV-005](investigations/INV-005-cancel-order-with-pending-pix.md), concluída; [ADR-012](decisions/ADR-012-cancel-pending-pix-on-order-cancel.md); correção sobre `0821822`, não commitada).
+  - Reprodução (#93, 2026-09-29): `cancelOrderWorkflow` cancelou pedido e collection sem chamar o Mercado Pago; a Order MP continuou `action_required/waiting_transfer`, e a confirmação continuou entregando QR para o pedido cancelado.
+  - Correção: hook `cancelOrderWorkflow.hooks.orderCanceled` → ação `cancel` do provider → `invalidatePixOrder` (invariante 45). Backend: 15 suítes, 310 testes; `tsc` nos dois apps, `medusa build`, `next build`; lint com os mesmos 2 warnings.
+  - E2E sandbox (2026-09-29): #94 Pix pendente → Order MP `canceled`, pedido `canceled`, confirmação `canceled` sem QR ✅; #95 Pix pago antes do webhook → cancelamento recusado e revertido, pedido `pending` ✅; #96 Payment capturado → reembolso pelo core, hook sem ação ✅.
+  - ⚠ Compensação do core 2.20.1: a compensation de `updatePaymentCollectionStep` falha (snapshot só com `{ id, status }`; `amount`/`currency_code` `undefined` recusados pelo MikroORM), o workflow termina `FAILED`, o pedido volta a `pending` e a payment collection fica `canceled`. No #95 (Pix pago) o primeiro evento de pagamento recalculou a collection. Investigação: [INV-006](investigations/INV-006-payment-collection-rollback.md). O defeito do core não foi corrigido; a rota do Admin deixou de chegar a ele no caso do Pix ([ADR-013](decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)).
+- ✅ **[INV-006](investigations/INV-006-payment-collection-rollback.md): rollback do `cancelOrderWorkflow` deixava a collection `canceled`** (concluída; [ADR-013](decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md); correção sobre `0821822`, não commitada).
+  - Reprodução com Pix não pago (#97, falha controlada no `GET` da Order MP): workflow `failed`, erro de `invoke` no hook e de `compensate` em `update-payment-collection`; pedido `pending`; collection `awaiting` → `canceled`; `payment_status: canceled`; Pix ainda pagável [banco 2026-09-29]. `order.canceled` é descartado no rollback.
+  - Correção: `POST /admin/orders/:id/cancel` (rota sobrescrita) executa `cancel-order-with-pending-pix`: `cancelValidateOrder` → step `cancel-pending-pix-charge` (mesma ação `cancel` do provider) → `cancelOrderWorkflow.runAsStep`. O hook fica como rede de segurança (invariantes 45 e 46).
+  - Backend: 18 suítes, 336 testes; `tsc` nos dois apps; `medusa build` e `next build`; lint do backend com 0 erros e os mesmos 2 warnings.
+  - E2E sandbox pela rota real (2026-09-29):
+    - #98 Pix pendente → tudo `canceled`, Pix cancelado antes do core ✅;
+    - #99 Pix pago antes do webhook → 400, core não executado, collection `awaiting` ✅;
+    - #100 `GET` 403 → 500, collection `awaiting`, `payment_status: awaiting` ✅, e nova tentativa concluída ✅;
+    - #101 cartão capturado → só o reembolso do core ✅.
+    - Nenhuma chamada duplicada ao Mercado Pago.
+  - #97 e #99 deixados como estão (dados de teste).
 
 4. ✅ **`GET /store/mercadopago/orders/:id/pix`: resposta reduzida ao mínimo; depois substituída pela capability e removida ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md))** (commit `fix(api): minimize Mercado Pago Pix order response`; invariante 14).
    - `:id` é o **ID da Order Medusa** (não o da Order Mercado Pago). A rota é usada só pela página de confirmação (`PaymentDetails` em `order-completed-template.tsx`), que também atende guest checkout.
