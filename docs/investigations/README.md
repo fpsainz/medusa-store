@@ -20,6 +20,7 @@ Regras:
 | [INV-001](INV-001-debit-card-sent-as-credit-card.md) | Débito enviado à Orders API como `credit_card` | aberta |
 | [INV-002](INV-002-store-order-retrieve-without-auth.md) | `GET /store/orders/:id` devolve dados do comprador a quem tem o ID | aberta |
 | [INV-003](INV-003-pix-sandbox-approval.md) | Aprovação de Pix da Orders API no sandbox (`payer.first_name = "APRO"`) | concluída |
+| [INV-004](INV-004-refund-payment-amount-and-idempotency.md) | `refundPayment`: valor como `BigNumberInput`, idempotency key por reembolso, total × parcial | concluída (E2E sandbox cartão e Pix; [ADR-011](../decisions/ADR-011-mercadopago-refund-contract.md)) |
 | [E2E-B-PRIME-2026-09-29](E2E-B-PRIME-2026-09-29.md) | E2E do cenário B' com o nome de cobrança `APRO` e webhook real (registro de execução, fora da numeração `INV`) | concluída (CONFIRMADO) |
 | [E2E-B-2026-09-29](E2E-B-2026-09-29.md) | E2E do cenário B com o nome de cobrança `APRO`, segunda janela da Order órfã da INV-003 e tempos de aprovação (registro de execução, fora da numeração `INV`) | concluída (NÃO REPRODUZIDO) |
 

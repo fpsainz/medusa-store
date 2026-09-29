@@ -23,7 +23,8 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 - **Orders API** (`/v1/orders`), `type: 'online'`, `processing_mode: 'automatic'`, `currency: 'BRL'` fixa. Ver [ADR-002](../decisions/ADR-002-orders-api-automatic-capture.md).
 - Cartão e Pix usam **o mesmo provider** (`pp_mercadopago`). A diferença está só em `session.data` (ver "Discriminação cartão × Pix").
 - Webhook com validação HMAC: [webhook.md](webhook.md).
-- Reembolso e cancelamento: implementados (`refundPayment`, `cancelPayment`), **sem testes** e **[não validado]** em uso real.
+- Reembolso (`refundPayment`): total sem body, parcial com `transactions[{ id, amount }]`, uma idempotency key por reembolso (`refund.id`). Testes unitários e E2E no sandbox (2026-09-29, cartão e Pix). Regras: invariantes 42–44; decisão: [ADR-011](../decisions/ADR-011-mercadopago-refund-contract.md); evidências: [INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md).
+- Cancelamento (`cancelPayment`): implementado, **sem testes** e **[não validado]** em uso real.
 
 ## Mapa de arquivos
 

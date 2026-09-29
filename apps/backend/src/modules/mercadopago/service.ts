@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { AbstractPaymentProvider, MedusaError } from '@medusajs/framework/utils'
+import { AbstractPaymentProvider, BigNumber, MedusaError } from '@medusajs/framework/utils'
 import { MercadoPagoConfig, Order } from 'mercadopago'
 
 type MercadoPagoProviderOptions = {
@@ -161,6 +161,35 @@ export type PixPaymentDto = {
   ticket_url?: string
   expires_at?: string
 }
+
+// Formats a Medusa monetary value as the Orders API's 2-decimal string. The
+// Payment Module passes amounts as BigNumberInput (number, string, BigNumber
+// or the raw { value, precision } it stores), so Number() is not enough:
+// Number({ value, precision }) is NaN. Returns undefined for anything that is
+// not a finite positive amount.
+function toPositiveDecimalString(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined
+  }
+
+  let amount: BigNumber
+  try {
+    amount = new BigNumber(value as ConstructorParameters<typeof BigNumber>[0])
+  } catch {
+    return undefined
+  }
+
+  const bigNumber = amount.bigNumber
+  if (!bigNumber || !bigNumber.isFinite() || !bigNumber.isGreaterThan(0)) {
+    return undefined
+  }
+
+  return bigNumber.toFixed(2)
+}
+
+// X-Idempotency-Key accepts 1 to 128 characters (Orders API integration
+// errors: invalid_idempotency_key_length).
+const MAX_IDEMPOTENCY_KEY_LENGTH = 128
 
 function getStringField(data: PaymentData | null | undefined, key: string): string | undefined {
   const value = data?.[key]
@@ -1054,34 +1083,69 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
     )
   }
 
+  // Called by the Payment Module (refundPaymentFromProvider_) after it has
+  // recorded the Refund and checked it against what was captured. input.amount
+  // is refund.raw_amount and context.idempotency_key is refund.id, unique per
+  // refund.
+  //
+  // Orders API contract: a total refund is POST /v1/orders/{id}/refund with no
+  // body; a partial one sends transactions[{ id: transactions.payments[].id,
+  // amount }]. The Payment Module only lets a refund equal the full payment
+  // amount when nothing was refunded before, so that is the total case; any
+  // other amount (including the remainder after partial refunds) is partial.
   async refundPayment(input: any): Promise<any> {
     const data = this.getDataObject(input)
     const orderId = typeof data.mercadopago_order_id === 'string' ? data.mercadopago_order_id : undefined
     const paymentId = typeof data.mercadopago_payment_id === 'string' ? data.mercadopago_payment_id : undefined
-    const amount = this.getAmount(input?.amount ?? data.amount ?? 0, 'refund amount')
+    const amount = toPositiveDecimalString(input?.amount)
+    const idempotencyKey = input?.context?.idempotency_key
 
-    if (!orderId || !paymentId) {
+    if (amount === undefined) {
       throw new MedusaError(
         MedusaError.Types.INVALID_DATA,
-        'Mercado Pago: mercadopago_order_id and mercadopago_payment_id are required to refund the payment.'
+        'Mercado Pago: refund amount must be a positive number.'
       )
     }
 
-    const idempotencyKey = this.getIdempotencyKey({ ...data, amount }, input?.context)
-    const order = await this.orderClient.refund({
-      id: orderId,
-      body: {
-        transactions: [
-          {
-            id: paymentId,
-            amount: amount.toFixed(2),
-          },
-        ],
-      },
-      requestOptions: {
-        idempotencyKey,
-      },
-    })
+    // Never the session's key (used for other requests and shared by every
+    // refund of this payment): each refund is a distinct operation.
+    if (
+      typeof idempotencyKey !== 'string' ||
+      idempotencyKey.length === 0 ||
+      idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH
+    ) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        'Mercado Pago: a unique idempotency key is required to refund the payment.'
+      )
+    }
+
+    if (!orderId) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        'Mercado Pago: mercadopago_order_id is required to refund the payment.'
+      )
+    }
+
+    const isTotal = amount === toPositiveDecimalString(data.amount)
+
+    if (!isTotal && !paymentId) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        'Mercado Pago: mercadopago_payment_id is required for a partial refund.'
+      )
+    }
+
+    const requestOptions = { idempotencyKey }
+    const order = await this.orderClient.refund(
+      isTotal
+        ? { id: orderId, requestOptions }
+        : {
+            id: orderId,
+            body: { transactions: [{ id: paymentId, amount }] },
+            requestOptions,
+          }
+    )
 
     const payment = order.transactions?.payments?.[0]
     const refund = order.transactions?.refunds?.at(-1)
@@ -1096,7 +1160,7 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
         mercadopago_order_status: order.status,
         mercadopago_order_status_detail: order.status_detail,
         mercadopago_refund_id: refund?.id ?? data.mercadopago_refund_id,
-        mercadopago_refunded_amount: refund?.amount ?? amount.toFixed(2),
+        mercadopago_refunded_amount: refund?.amount ?? amount,
       },
     }
   }

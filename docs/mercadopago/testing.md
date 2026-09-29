@@ -8,7 +8,7 @@
 cd apps/backend && pnpm run test:unit
 ```
 
-Resultado em 2026-09-29, com o ADR-010 sobre `a4aae37` (não commitado): **12 suítes, 263 testes, todos passando.**
+Resultado em 2026-09-29, com a correção do reembolso ([INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md)) sobre `fb5d9a0` (não commitada): **13 suítes, 285 testes, todos passando.** Antes dela, em `fb5d9a0`: 12 suítes, 263 testes.
 
 | Spec (em `apps/backend/src/`) | Cobre |
 |---|---|
@@ -19,13 +19,15 @@ Resultado em 2026-09-29, com o ADR-010 sobre `a4aae37` (não commitado): **12 su
 | `api/store/mercadopago/carts/[id]/pix/__tests__/route.unit.spec.ts` | Leitura ao vivo, estados terminais, fallback com o Mercado Pago fora do ar, DTO sem IDs/status nativos, janela de pagamento (antes/depois da deadline, status real mantido), 410 para cart concluído, 404, isolamento por cart |
 | `api/store/mercadopago/payment-access/pix/__tests__/route.unit.spec.ts` | Leitura por capability: DTO por allowlist, order resolvida no servidor, estados (pendente, aprovado, cancelado ao vivo, deadline vencida, Mercado Pago fora do ar), 404 genérico para cada falha, token na query ignorado |
 | `modules/mercadopago/__tests__/pix-access-view.unit.spec.ts` | `toPixAccessDto` por estado e deadline |
+| `modules/mercadopago/__tests__/refund.unit.spec.ts` | `refundPayment`: valor como `BigNumberInput`, idempotency key por reembolso, total sem body × parcial com `transactions`, recusas antes da chamada, erro da API propagado (invariantes 42–44). Mock do SDK; nenhum reembolso real |
 | `modules/payment-access/__tests__/*.unit.spec.ts` | Token opaco, hash, validação, limite por session, corrida de emissões, revogação, limpeza com retenção de 7 dias (lotes, repetição) |
 | `jobs/__tests__/cleanup-payment-access-grants.unit.spec.ts` | Job de limpeza: chama o workflow e registra só a quantidade |
 | `workflows/payment-access/__tests__/pix-access-binding.unit.spec.ts` | Condições de emissão da capability Pix |
 
 ### Sem cobertura
 
-- `refundPayment`, `cancelPayment`, `retrievePayment`, `getPaymentStatus`, `capturePayment`, `initiatePayment` (nenhuma menção no spec do provider).
+- `cancelPayment`, `retrievePayment`, `getPaymentStatus`, `capturePayment`, `initiatePayment` (nenhuma menção no spec do provider).
+- `refundPayment` não tem teste automatizado contra a Orders API real. O E2E manual de 2026-09-29 (cartão e Pix, total e parcial) está na [INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md#e2e-sandbox-2026-09-29).
 - Um teste que falhe se `id` for adicionado ao provider em `medusa-config.ts`.
 - Testes de integração HTTP (não existem) e CI (não existe).
 - No storefront só existe o teste da fronteira servidor → cliente do Pix (`apps/storefront/src/lib/util/__tests__/pix-client.test.mjs`, `pnpm test` em `apps/storefront`, `node --test` sem dependência nova; exige Node ≥ 22.12). Componentes, Server Actions e cookies não têm teste automatizado.

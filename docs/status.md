@@ -4,7 +4,7 @@
 
 Retrato atual. Atualizar ao fim de cada etapa relevante. Histórico fica no Git, não aqui. Marcadores de origem: [README.md](README.md#convenções).
 
-**Próxima sessão começa por:** push da branch (aguarda confirmação). Depois: commit do [ADR-010](decisions/ADR-010-pix-payer-name-from-billing-address.md) (implementado, com testes unitários, ainda não commitado). O E2E B' foi confirmado ([E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md)) e o B não foi reproduzido ([E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md)). Pendências do item 3 da prioridade alta: B e a Order órfã da INV-003, nenhuma com ação definida. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
+**Próxima sessão começa por:** push da branch (aguarda confirmação). O [ADR-010](decisions/ADR-010-pix-payer-name-from-billing-address.md) está commitado em `fb5d9a0` [commit `fb5d9a0`]. Correção do reembolso ([INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md), [ADR-011](decisions/ADR-011-mercadopago-refund-contract.md)) implementada sobre `fb5d9a0` e validada no sandbox em 2026-09-29; não commitada. O E2E B' foi confirmado ([E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md)) e o B não foi reproduzido ([E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md)). Pendências do item 3 da prioridade alta: B e a Order órfã da INV-003, nenhuma com ação definida. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
 
 Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 🔍 investigação aberta · 🛠 dívida técnica · ❌ não existe · — sem registro
 
@@ -31,7 +31,7 @@ Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 
 | Webhook: Order paga de outra cobrança não atinge a session | ✅ | ✅ | ✅ teste negativo com Order sandbox `APRO` | Validado |
 | Cartão (crédito) | ✅ `payment_type_id = credit_card` | parcial² | ✅ #79 (antes), #80 (regressão após a correção) | Validado (2026-09-27) |
 | Cartão (débito) | ✅ `payment_type_id = debit_card` → `type: debit_card` (ADR-005) | ✅ | ⚠ inviável no sandbox: o único débito de teste oficial é classificado como `prepaid_card` | Corrigido; E2E de débito não validável no sandbox atual |
-| `refundPayment` | existe no código | ❌ | — | Não validado |
+| `refundPayment` | ✅ corrigido sobre `fb5d9a0`, não commitado ([INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md), [ADR-011](decisions/ADR-011-mercadopago-refund-contract.md)) | ✅ `RF` | ✅ sandbox 2026-09-29: total cartão #85, parcial cartão #80, total Pix #92, dois parciais Pix #91 | Validado no sandbox |
 | `cancelPayment` | existe no código | ❌ | — | Não validado |
 | `retrievePayment` | existe no código | ❌ | — | Não validado |
 | `getPaymentStatus` | existe no código | ❌ | — | Não validado |
@@ -186,7 +186,7 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 2. ✅ ~~E2E real de cartão~~: crédito validado (#79); débito coberto pela INV-001.
 3. ✅ ~~E2E real do webhook depois do hardening~~: correlação, duplicidade, caso negativo e cenário C validados (#83). ⚠ Depois do hardening, B' foi confirmado e **B** não foi reproduzido (abaixo); B continua pendente. Os dois precisam de um Pix criado pelo checkout e pago no sandbox, o que o ADR-010 tornou possível ([testing.md](mercadopago/testing.md#pix-no-sandbox)).
    - ✅ Causa confirmada pela [INV-003](investigations/INV-003-pix-sandbox-approval.md) (concluída em 2026-09-29): o sandbox aprova automaticamente com `payer.first_name = "APRO"`, e o checkout não envia esse campo.
-   - ✅ [ADR-010](decisions/ADR-010-pix-payer-name-from-billing-address.md) implementado (2026-09-29, não commitado, sobre `a4aae37`). Para sessions Pix, o `payer` passa a levar `first_name`/`last_name` do `billing_address` do cart, lidos no servidor pela rota de update e persistidos em `session.data.payer` (invariantes 40 e 41). Mudou só `payment-sessions/[id]/route.ts`. Backend: 12 suítes, 263 testes, `tsc` limpo, lint com 0 erros e os mesmos 2 warnings.
+   - ✅ [ADR-010](decisions/ADR-010-pix-payer-name-from-billing-address.md) implementado em 2026-09-29 e commitado em `fb5d9a0` [commit `fb5d9a0`]. Para sessions Pix, o `payer` passa a levar `first_name`/`last_name` do `billing_address` do cart, lidos no servidor pela rota de update e persistidos em `session.data.payer` (invariantes 40 e 41). Mudou só `payment-sessions/[id]/route.ts`. Backend: 12 suítes, 263 testes, `tsc` limpo, lint com 0 erros e os mesmos 2 warnings.
    - ✅ E2E B' executado em 2026-09-29, resultado **CONFIRMADO** ([E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md)). Comprovado:
      - o nome de cobrança chegou a `session.data.payer`;
      - o webhook `order.processed` real chegou, com correlação exata e 200;
@@ -209,7 +209,14 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
 
 6. 🔍 **Status desconhecido: cartão × Pix.** No cartão, status desconhecido vira `pending` (`getStatusFromGateway`); no Pix, lança erro (`resolvePixStatus`). É uma inconsistência de comportamento conhecida, **não demonstrada como bug**. Sem correção sugerida.
 7. 🔍 **Idempotency key do cartão estável durante a session** (`mercadopago_idempotency_key`, gravada em `initiatePayment`). Pode ser deliberado, para permitir retries do mesmo pagamento. Só vira correção se um teste mostrar conflito real.
-8. ⚠ `refundPayment` sem testes e sem E2E.
+8. ✅ **`refundPayment`** ([INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md), concluída; [ADR-011](decisions/ADR-011-mercadopago-refund-contract.md)).
+   - ✅ E1 reproduzido por teste e corrigido: `refund.raw_amount` (`{ value, precision }`) virava `NaN` em `Number()`, e todo reembolso pedido pelo Medusa falhava antes de chamar o Mercado Pago.
+   - ✅ E2 reproduzido por teste e corrigido: todos os reembolsos de um Payment usavam a `mercadopago_idempotency_key` da session; agora cada um usa `context.idempotency_key` (`refund.id`).
+   - ✅ Total sem body × parcial com `transactions[{ id, amount }]`, conforme a documentação (invariante 44).
+   - Backend em 2026-09-29, com a correção: 13 suítes, 285 testes, `tsc` limpo, lint com 0 erros e os mesmos 2 warnings.
+   - ✅ E2E sandbox em 2026-09-29, pelo `refundPaymentWorkflow` do core (o mesmo da rota do Admin) via `medusa exec`, sem a camada HTTP/auth do Admin: total sem body (cartão #85, Pix #92), parcial com `transactions` (cartão #80, Pix #91 R$ 30 + R$ 80), key = `refund.id` em todos, HTTP 201, reembolsos `processed` na resposta e ~6 min depois. Guard do Medusa recusou reembolso acima do capturado sem chamar o Mercado Pago. Evidências na INV-004.
+   - ⚠ Semântica ambígua, sem bug (auditoria de 2026-09-29): depois do reembolso, `payment.data.mercadopago_payment_status`/`mercadopago_status_detail` continuam `processed/accredited` (a resposta do reembolso não traz `transactions.payments`), enquanto a transação no Mercado Pago passa a `refunded`/`partially_refunded`. Nenhum código, o core, o Admin ou o storefront lê esses campos em `payment.data`; o reembolso está representado por `Refund`, `OrderTransaction`, `refunded_amount` e `mercadopago_order_status`. Sem correção ([INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md#semântica-de-paymentdata-depois-do-reembolso)).
+   - ⚠ Não observado: reembolso em `processing`/`failed`, recusa do Mercado Pago, entrega dos webhooks de reembolso (backend e túnel desligados).
 9. ⚠ `cancelPayment` sem testes e sem E2E.
 10. ⚠ `retrievePayment` sem testes e sem E2E.
 11. ⚠ `getPaymentStatus` sem testes e sem E2E.

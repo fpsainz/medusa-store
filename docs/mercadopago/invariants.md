@@ -15,7 +15,8 @@ Specs (caminhos relativos a `apps/backend/src/`):
 `WB` = `workflows/payment-access/__tests__/pix-access-binding.unit.spec.ts` ·
 `J` = `jobs/__tests__/cleanup-payment-access-grants.unit.spec.ts` ·
 `PAX` = `api/store/mercadopago/payment-access/pix/__tests__/route.unit.spec.ts` ·
-`V` = `modules/mercadopago/__tests__/pix-access-view.unit.spec.ts`
+`V` = `modules/mercadopago/__tests__/pix-access-view.unit.spec.ts` ·
+`RF` = `modules/mercadopago/__tests__/refund.unit.spec.ts`
 
 ## Identidade
 
@@ -83,3 +84,13 @@ Detalhes em [webhook.md](webhook.md). Teste de todos os itens abaixo: `W`.
 ## Captura
 
 22. **A captura é automática** (`processing_mode: 'automatic'`); `capturePayment` lança erro de propósito. — `service.ts`. Sem teste. [ADR-002](../decisions/ADR-002-orders-api-automatic-capture.md)
+
+## Reembolso
+
+Decisão: [ADR-011](../decisions/ADR-011-mercadopago-refund-contract.md). Evidências, inclusive o E2E no sandbox de 2026-09-29 (cartão e Pix, total e parcial): [INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md).
+
+Semântica em `payment.data` (não é invariante, só registro): `mercadopago_payment_status`/`mercadopago_status_detail` são o status de `transactions.payments[0]` na última resposta do Mercado Pago que trouxe a transação; a resposta do reembolso não a traz, então eles ficam com o valor anterior. O estado do reembolso fica em `Refund`/`OrderTransaction`/`refunded_amount` e em `mercadopago_order_status`/`_detail`, `mercadopago_refund_id` e `mercadopago_refunded_amount`. Nenhum código lê os dois campos em `payment.data`.
+
+42. **O valor do reembolso é o `amount` que o Payment Module envia, convertido como `BigNumberInput`,** nunca com `Number()` e nunca substituído por `data.amount`. Ausente, inválido, zero ou negativo → recusa sem chamar a API. — `refundPayment`, `toPositiveDecimalString`. Teste: `RF`.
+43. **Cada reembolso usa `context.idempotency_key` (o `refund.id`) como `X-Idempotency-Key`.** Nunca `mercadopago_idempotency_key` nem `mercadopago_pix_idempotency_key`. Ausente, vazia ou com mais de 128 caracteres → recusa sem chamar a API. — `refundPayment`. Teste: `RF`.
+44. **Total × parcial:** valor igual a `payment.data.amount` (2 casas) → `POST /v1/orders/{id}/refund` sem body; qualquer outro valor → `transactions[{ id: mercadopago_payment_id, amount }]`. Sem `data.amount`, nunca é total. Parcial sem `mercadopago_payment_id` ou qualquer reembolso sem `mercadopago_order_id` → recusa sem chamar a API. — `refundPayment`. Teste: `RF`.
