@@ -1,10 +1,10 @@
 # Status do projeto
 
-> Status: vigente · Última verificação: 2026-09-28 · Commit: `6e4579b` · Branch: `rebuild/mercadopago-pix-storefront`
+> Status: vigente · Última verificação: 2026-09-29 · Commit: `6e4579b` · Branch: `rebuild/mercadopago-pix-storefront`
 
 Retrato atual. Atualizar ao fim de cada etapa relevante. Histórico fica no Git, não aqui. Marcadores de origem: [README.md](README.md#convenções).
 
-**Próxima sessão começa por:** push da branch (aguarda confirmação). Depois: decidir como validar Pix pago pelo checkout no sandbox (ver [limitação do sandbox](mercadopago/testing.md#pix-no-sandbox)) → cenários B e B' depois do hardening. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
+**Próxima sessão começa por:** push da branch (aguarda confirmação). Depois: commit do [ADR-010](decisions/ADR-010-pix-payer-name-from-billing-address.md) (implementado, com testes unitários, ainda não commitado). O E2E B' foi confirmado ([E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md)) e o B não foi reproduzido ([E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md)). Pendências do item 3 da prioridade alta: B e a Order órfã da INV-003, nenhuma com ação definida. **Não repetir a auditoria geral do fluxo Pix nem o E2E do webhook:** o que foi comprovado está abaixo.
 
 Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 🔍 investigação aberta · 🛠 dívida técnica · ❌ não existe · — sem registro
 
@@ -22,8 +22,8 @@ Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 
 | Pix preparado na Review | ✅ | ✅ | ✅ | Validado |
 | QR / copia e cola | ✅ | ✅ | ✅ | Validado |
 | A — Pix pendente → Place order | ✅ | ✅ | ✅ #75, #78 (antes); #81, #82, #84, #86 (depois) | Validado |
-| B — Place order → webhook depois | ✅ | ✅ | ✅ #76 (antes); ⚠ depois: Pix do checkout não é aprovável no sandbox | Validado só antes do hardening |
-| B' — webhook (pago) → usuário na Review → Place order | ✅ | ✅ | ⚠ | E2E isolado pendente |
+| B — Place order → webhook depois | ✅ | ✅ | ✅ #76 (antes); ⚠ depois: NÃO REPRODUZIDO em 2026-09-29 ([E2E-B](investigations/E2E-B-2026-09-29.md)): aprovação em ~3,5 s, cart concluído pelo webhook antes do Place order | Validado só antes do hardening |
+| B' — webhook (pago) → usuário na Review → Place order | ✅ | ✅ | ✅ #91 (2026-09-29, [E2E-B-PRIME](investigations/E2E-B-PRIME-2026-09-29.md)) | Validado (CONFIRMADO) |
 | C — Pix pago → webhook → aba fechada, sem Place order | ✅ | parcial¹ | ✅ #77 (antes); ✅ #83 (depois, webhook real) | Validado |
 | Bloqueio do Place order (Pix) | ✅ | ❌ storefront sem testes | ✅ | Validado em E2E |
 | Webhook: assinatura, `GET /v1/orders`, correlação exata | ✅ | ✅ | ✅ webhooks reais de 2026-09-27 | Validado depois do hardening |
@@ -57,7 +57,7 @@ Bloqueio do Place order
      habilitado com a cobrança pending + QR disponível   ✅
 ```
 
-**B' é diferente de C** e não deve ser tratado como validado.
+**B' é diferente de C.** Nesse registro (antes do hardening) B' não foi validado isoladamente. O primeiro E2E isolado de B' é o de 2026-09-29 ([abaixo](#e2e-b-depois-do-adr-010-2026-09-29-a4aae37--adr-010-não-commitado)).
 
 ### Webhook real depois do hardening (2026-09-27, código `3a56150`)
 
@@ -88,7 +88,47 @@ Criação de Pix (order.action_required) × 4 carts novos                       
      200 · session exata · session continua pending · cart não completado
 ```
 
-As Orders Mercado Pago das #81, #82 e #84 (cenário A) nunca foram pagas: o Pix criado pelo checkout não é aprovável no sandbox ([testing.md](mercadopago/testing.md#pix-no-sandbox)). A Order "A" do teste negativo é uma cobrança sandbox paga e sem session, criada de propósito.
+As Orders Mercado Pago das #81, #82 e #84 (cenário A) nunca foram pagas: antes do ADR-010, o Pix criado pelo checkout não era aprovável no sandbox ([testing.md](mercadopago/testing.md#pix-no-sandbox)). A Order "A" do teste negativo é uma cobrança sandbox paga e sem session, criada de propósito.
+
+### Aprovação de Pix no sandbox (INV-003, 2026-09-29, código `a4aae37`)
+
+Fonte: [INV-003](investigations/INV-003-pix-sandbox-approval.md). Uma única Order criada direto na Orders API sandbox, sem nada no Medusa e sem escrita no banco. Nenhum arquivo do projeto foi alterado.
+
+```text
+corpo real do createPixOrder + payer.first_name "APRO"   → HTTP 201, external_reference preservado   ✅
+action_required/waiting_transfer → processed/accredited   automático, ≤ ~3,8 s (timestamps do Mercado Pago)   ✅
+webhook da aprovação                                      backend/túnel desligados                    ⚠ não comprovado
+```
+
+A Order de teste (`ORDTST01M3PGG6E3JDZAMFAHE2ZNN0GV`) está paga e não pertence a nenhum cart. Se uma notificação dela chegar a um backend ligado, a resposta esperada é 503, e o Mercado Pago tende a reenviar (invariante 20). ⚠ Nenhuma notificação dela chegou em ~45 min com o túnel ligado, nos E2E B' e B: **não comprovado** ([E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md#order-órfã-da-inv-003)). O 503 continua não comprovado para ela.
+
+### E2E B' depois do ADR-010 (2026-09-29, `a4aae37` + ADR-010 não commitado)
+
+Fonte e evidências completas: [E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md). Resultado: **CONFIRMADO**, 15 de 15 critérios. A primeira classificação foi PARCIAL, porque o critério 11 original ("session `captured`") estava errado; ele foi substituído [decisão humana 2026-09-29]. Session `authorized` com Payment capturado é o comportamento do Medusa 2.20.1 ([webhook.md](mercadopago/webhook.md#processamento-no-provider)).
+
+```text
+billing APRO → session.data.payer (first_name/last_name) → prepare → Order MP     ✅  cart_01M3PPM9VWY5ZM7BVNXHBW9HTK
+Order MP action_required/waiting_transfer → processed/accredited (~93 s)         ✅  ORDTST01M3PPT9WBAF8EGKDS7P6GHEWN
+order.action_required · order.processed — x-signature, HMAC, correlação exata, 200   ✅  sem retry
+session pending → authorized · 1 Payment capturado · 1 Capture · collection completed   ✅  [banco 2026-09-29]
+webhook concluiu o cart → pedido #91; Place order depois: 200, nada novo criado   ✅
+Review "Payment approved" sem QR · confirmação "We received your Pix payment"     ✅  [decisão humana 2026-09-29]
+```
+
+Observação, não bug: o tempo de aprovação com `APRO` variou (~3,8 s na INV-003, ~93 s aqui, ~3,5 s no [E2E B](investigations/E2E-B-2026-09-29.md#tempo-de-aprovação-com-apro)); a causa não foi determinada.
+
+### E2E B depois do ADR-010 (2026-09-29): NÃO REPRODUZIDO
+
+Fonte: [E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md).
+
+```text
+billing APRO → session.data.payer → prepare → Order MP action_required           ✅  cart_01M3PS2ZAWVZYQ423NTNMV2RJE
+Order MP → processed/accredited em ~3,5 s                                        ✅  ORDTST01M3PS7RD34MPPRDQ0TQBZ7RFV
+order.action_required · order.processed — x-signature, correlação exata, 200     ✅  sem retry
+webhook concluiu o cart → pedido #92 antes de qualquer Place order               ✅  sem POST /complete
+session authorized · 1 Payment captured_at · 1 Capture · collection completed    ✅  [banco 2026-09-29]
+Place order com a Order ainda pendente (B)                                       —   não reproduzido
+```
 
 ### Cartão
 
@@ -144,7 +184,17 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
    - ⚠ débito não validável no sandbox atual.
    - Sessions de cartão antigas, sem `payment_type_id`, são recusadas com erro controlado e exigem novo preenchimento.
 2. ✅ ~~E2E real de cartão~~: crédito validado (#79); débito coberto pela INV-001.
-3. ✅ ~~E2E real do webhook depois do hardening~~: correlação, duplicidade, caso negativo e cenário C validados (#83). ⚠ Continuam pendentes os cenários **B** (depois do hardening) e **B'**, que precisam de um Pix criado pelo checkout e pago no sandbox. Isso não é possível com o código atual ([testing.md](mercadopago/testing.md#pix-no-sandbox)); a saída exige decisão.
+3. ✅ ~~E2E real do webhook depois do hardening~~: correlação, duplicidade, caso negativo e cenário C validados (#83). ⚠ Depois do hardening, B' foi confirmado e **B** não foi reproduzido (abaixo); B continua pendente. Os dois precisam de um Pix criado pelo checkout e pago no sandbox, o que o ADR-010 tornou possível ([testing.md](mercadopago/testing.md#pix-no-sandbox)).
+   - ✅ Causa confirmada pela [INV-003](investigations/INV-003-pix-sandbox-approval.md) (concluída em 2026-09-29): o sandbox aprova automaticamente com `payer.first_name = "APRO"`, e o checkout não envia esse campo.
+   - ✅ [ADR-010](decisions/ADR-010-pix-payer-name-from-billing-address.md) implementado (2026-09-29, não commitado, sobre `a4aae37`). Para sessions Pix, o `payer` passa a levar `first_name`/`last_name` do `billing_address` do cart, lidos no servidor pela rota de update e persistidos em `session.data.payer` (invariantes 40 e 41). Mudou só `payment-sessions/[id]/route.ts`. Backend: 12 suítes, 263 testes, `tsc` limpo, lint com 0 erros e os mesmos 2 warnings.
+   - ✅ E2E B' executado em 2026-09-29, resultado **CONFIRMADO** ([E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md)). Comprovado:
+     - o nome de cobrança chegou a `session.data.payer`;
+     - o webhook `order.processed` real chegou, com correlação exata e 200;
+     - session `authorized` (estado esperado), exatamente 1 Payment com `captured_at`, 1 Capture e collection `completed`;
+     - a Review e a confirmação mostraram "Payment approved".
+   - ⚠ Pendente: cenário **B**. NÃO REPRODUZIDO em 2026-09-29 ([E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md)): a aprovação em ~3,5 s não deu tempo de clicar Place order antes dela. Só é viável pelo navegador com uma aprovação lenta do sandbox, que não é controlável.
+   - ⚠ Pendente: webhook da Order órfã da INV-003. **Não comprovado**: nenhuma notificação observada em ~45 min, e o `notifications_history` do MCP não serve como evidência.
+   - Observação, não bug: o tempo de aprovação com `APRO` varia (~3,8 s, ~93 s, ~3,5 s); a causa não foi determinada.
 
 ### Média
 
@@ -217,7 +267,7 @@ Banco: 6 grants, todos token_hash hex de 64, nenhum plaintext; 1 superseded, 1 p
   - 2 min depois da deadline: a capability do probe responde só `{ status: "expired" }`, sem QR, enquanto o Mercado Pago (leitura ao vivo por `carts/:id/pix`) ainda dizia **`pending`**. A deadline local conservadora escondeu o QR antes do Mercado Pago.
   - O pedido #87 (deadline ~5 min antes) já respondia **`canceled`**, só status. O check automatizado esperava `expired` e falhou; o comportamento é o do invariante 34 (status final do Mercado Pago é mantido, sem artefatos).
   - 16 min depois da deadline: o Mercado Pago mostrava **`canceled`** para o probe; as duas capabilities (deadline + 15 min) → 404 genérico.
-- **Estados no E2E real:** `pending` ✅; `canceled` ✅ (Pix vencido cancelado pelo Mercado Pago); `expired` só pela deadline local ✅. **`approved` e `failed` não reproduzíveis no sandbox** (Pix do checkout não é aprovável: [testing.md](mercadopago/testing.md#pix-no-sandbox)); cobertos só por testes automatizados (`V`, `PAX`).
+- **Estados no E2E real:** `pending` ✅; `canceled` ✅ (Pix vencido cancelado pelo Mercado Pago); `expired` só pela deadline local ✅. **`approved` e `failed` não reproduzíveis no sandbox** nesta data (antes do ADR-010, o Pix do checkout não era aprovável: [testing.md](mercadopago/testing.md#pix-no-sandbox)); cobertos só por testes automatizados (`V`, `PAX`). Depois do ADR-010, `approved` foi observado pela capability na confirmação do E2E B' (#91, [E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md#ui-decisão-humana-2026-09-29)); `failed` continua não reproduzido.
 - Os testes que dependem de navegador estão na seção seguinte (executados depois, com o código em `6e4579b`).
 
 #### E2E no navegador (2026-09-27/28, código em `6e4579b`)

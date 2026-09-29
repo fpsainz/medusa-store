@@ -8,7 +8,7 @@
 cd apps/backend && pnpm run test:unit
 ```
 
-Resultado em 2026-09-27, commit `3a56150`: **6 suítes, 141 testes, todos passando.**
+Resultado em 2026-09-29, com o ADR-010 sobre `a4aae37` (não commitado): **12 suítes, 263 testes, todos passando.**
 
 | Spec (em `apps/backend/src/`) | Cobre |
 |---|---|
@@ -55,7 +55,26 @@ Estado das validações E2E (cenários, pedidos e pendências): [../status.md](.
 Verificado no código em `3a56150` e na documentação oficial do Mercado Pago (Checkout Transparente, Orders API, "Realizar compra de teste com Pix"), consultada via MCP em 2026-09-27.
 
 - No sandbox, a documentação oficial só descreve uma forma de aprovar um Pix da Orders API: **criar** a Order com `payer.first_name = "APRO"`. Ela nasce `action_required/waiting_transfer` e depois é aprovada automaticamente. A documentação diz que o teste de Pix não é feito "simulando uma compra".
-- O checkout não consegue enviar `first_name`: a rota de update reduz `payer` a `email` + `identification` (`sanitizePayer`, invariante 2). O `createPixOrder` envia esse `payer` sem alteração. Por isso, **um Pix criado pelo checkout fica em `waiting_transfer` no sandbox**. Isso foi observado em 2026-09-27 com payer `@testuser.com` e `@example.com`. O domínio do e-mail não muda o resultado.
+- ✅ **Confirmado pela [INV-003](../investigations/INV-003-pix-sandbox-approval.md)** (sandbox, 2026-09-29). Uma Order criada com o corpo exato do `createPixOrder` mais `payer.first_name = "APRO"` passou de `action_required/waiting_transfer` a `processed/accredited` sozinha, em no máximo cerca de 4 s (3,8 s pelos timestamps do Mercado Pago). O `external_reference` foi preservado. `processing_mode: automatic`, `expiration_time: PT1H`, `description` e a idempotency key não impedem a aprovação. É um gatilho do mecanismo de teste do sandbox, não um requisito de produção.
+- ⚠ O webhook da aprovação da Order da INV-003 **não foi comprovado**: backend e túnel estavam desligados. Com o túnel ligado por ~45 min no total, nos E2E B' e B, nenhuma notificação dela chegou: **não comprovado** ([E2E-B-2026-09-29](../investigations/E2E-B-2026-09-29.md#order-órfã-da-inv-003)).
+- Até o ADR-010, o checkout não enviava `first_name`, e **o Pix criado pelo checkout ficava em `waiting_transfer` no sandbox**. Isso foi observado em 2026-09-27 com payer `@testuser.com` e `@example.com`; o domínio do e-mail não muda o resultado.
+- **Com o [ADR-010](../decisions/ADR-010-pix-payer-name-from-billing-address.md)** (implementado, testes unitários), a rota de update grava em `session.data.payer` o `first_name`/`last_name` do **endereço de cobrança** do cart, só para Pix (invariante 40). O `createPixOrder` os envia sem mudança. **Para testar a aprovação no sandbox, use `APRO` como nome no endereço de cobrança** antes de escolher o Pix. O nome só é relido quando os dados do Brick são enviados de novo; mudar o endereço depois não altera a session nem uma Order já criada.
+- **E2E B' executado em 2026-09-29, resultado CONFIRMADO** ([E2E-B-PRIME-2026-09-29](../investigations/E2E-B-PRIME-2026-09-29.md)):
+  - o nome de cobrança `APRO` chegou a `session.data.payer`, e a Order do checkout foi aprovada sozinha;
+  - `order.action_required` e `order.processed` foram confirmados, com HMAC válido, correlação com a session exata e HTTP 200;
+  - o webhook concluiu o cart;
+  - a Review e a confirmação mostraram "Payment approved".
+- **Critério de pagamento concluído neste caminho:**
+  - session **`authorized`**, com `authorized_at`, que é o estado esperado, não `captured`;
+  - exatamente 1 Payment com `captured_at`, e 1 Capture;
+  - collection `completed`, com o valor capturado igual ao amount.
+
+  Por quê: [webhook.md](webhook.md#processamento-no-provider). Não verificar a captura pelo status da session.
+- **O tempo de aprovação com `APRO` varia:** ~3,8 s na INV-003, ~93 s no E2E B' e ~3,5 s no E2E B. O sandbox apresentou tempos de aprovação variáveis; a causa não foi determinada.
+- **Cenário B: NÃO REPRODUZIDO** em 2026-09-29 ([E2E-B-2026-09-29](../investigations/E2E-B-2026-09-29.md)). A aprovação saiu ~3,5 s depois da criação, e o webhook concluiu o cart (#92) antes de qualquer Place order.
+  - B exige concluir o cart entre o prepare e a aprovação, o que só é viável pelo navegador quando o sandbox demora, como os ~93 s do B'. Esse tempo não é controlável.
+  - **B continua não validado depois do hardening.**
+- O `notifications_history` do MCP voltou vazio mesmo logo depois de entregas confirmadas pelo túnel. Não usar esse histórico como evidência de envio ou de não envio.
 - O "Simular" do painel de Webhooks só envia uma notificação com o `Data ID` informado; não muda o status da Order. Como o webhook lê o status em `GET /v1/orders/{id}`, simular uma Order não paga não autoriza nada.
 - Uma Order criada direto na API com `APRO` não pertence a nenhuma session. Ela serve para o teste negativo de correlação (503, sem atingir a session do cart), não para os cenários B, B' e C.
 - **Vencimento observado** (2026-09-27, Pix com `expiration_time: "PT1H"`): 2 min depois do prazo a Order ainda estava `pending` (display); entre ~2 e ~7 min depois passou a **`canceled`**. `expired` não foi observado como status da Order. Detalhes em [../status.md](../status.md#capability-de-pagamento-adr-007).

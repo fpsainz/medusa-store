@@ -33,11 +33,32 @@ O Medusa entrega o payload a `getWebhookActionAndData` (`service.ts`), que **nã
 
 A partir da ação, o core do Medusa 2.20.1 segue o fluxo nativo `processPaymentWorkflow` → `completeCartAfterPaymentStep` → `completeCartWorkflow`, que completa o cart mesmo sem o navegador.
 
+### Estados depois de uma Order paga
+
+Fonte: código do Medusa 2.20.1 instalado (`@medusajs/medusa` subscriber `payment-webhook`, `@medusajs/core-flows` `processPaymentWorkflow`/`authorizePaymentSessionStep`/`capturePaymentWorkflow`, `@medusajs/payment` `PaymentModuleService`), lido em 2026-09-29. Caminho de uma session Pix que ainda não tem Payment:
+
+```text
+order.processed
+→ getStatusFromGateway = captured → ação `captured` (PaymentActions.SUCCESSFUL)
+→ processPaymentWorkflow, ramo de auto-captura (sem Payment para a session)
+→ authorizePaymentSession → provider authorizePayment (Pix: relê a Order) → captured
+→ Payment Session gravada como authorized (o módulo converte captured em authorized)
+→ Payment criado e capturado sem chamar o provider (captured_at)
+→ 1 Capture
+→ collection completed
+→ cart concluído e pedido criado (completeCartAfterPaymentStep, só se o cart ainda não tem pedido)
+```
+
+- **Session `authorized` não significa ausência de captura.** O Medusa guarda a captura no Payment (`captured_at`) e nos Captures, não no status da session. O `authorizePaymentSessionStep` considera falha qualquer session que não esteja `authorized`.
+- Para verificar se o pagamento foi concluído, confira: session `authorized` com `authorized_at`, exatamente 1 Payment com `captured_at`, 1 Capture, e collection `completed` com o valor capturado igual ao amount.
+- O `capturePayment` do provider, que lança erro de propósito ([ADR-002](../decisions/ADR-002-orders-api-automatic-capture.md)), não é chamado nesse caminho.
+- Observado assim no cenário C (#83) e no E2E B' ([E2E-B-PRIME-2026-09-29](../investigations/E2E-B-PRIME-2026-09-29.md)).
+
 ## Validação
 
 - ✅ Correlação validada por teste unitário (ver [Testes](#testes)).
 - ✅ Correlação validada por webhook real depois do hardening, em 2026-09-27, com o código `3a56150`. Foram cobertos: Pix pago completando o cart só pelo webhook, notificação tardia de cart já completo sem efeito, Order paga sem session respondendo 503 sem atingir outra session, e `order.action_required` sem autorizar. Evidência em [../status.md](../status.md#webhook-real-depois-do-hardening-2026-09-27-código-3a56150).
-- Um Pix criado pelo checkout não é aprovável no sandbox; ver [testing.md](testing.md#pix-no-sandbox).
+- ✅ Aprovação de um Pix criado pelo checkout validada por webhook real em 2026-09-29: com o nome de cobrança `APRO` (ADR-010), o sandbox aprova a Order. `order.action_required` e `order.processed` chegaram com correlação exata e 200 ([E2E-B-PRIME-2026-09-29](../investigations/E2E-B-PRIME-2026-09-29.md); como testar em [testing.md](testing.md#pix-no-sandbox)).
 
 ## Por que o HMAC usa `data.id` em minúsculas
 

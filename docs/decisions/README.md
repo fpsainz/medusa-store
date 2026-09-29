@@ -17,8 +17,9 @@ Só viram ADR decisões com evidência no código ou no Git. O que não foi deci
 | [ADR-007](ADR-007-payment-access-capability-for-pix.md) | Capability temporária (`payment_access`) para acompanhar o Pix depois do checkout | Aceito | 2026-09-27 |
 | [ADR-008](ADR-008-pix-payment-window-hides-artifacts.md) | Fim da janela de pagamento do Pix esconde QR/ticket sem mudar o status do provider | Aceito | 2026-09-27 |
 | [ADR-009](ADR-009-payment-access-keeps-provider-status.md) | A leitura por capability mantém o status do provider e sinaliza a janela à parte | Aceito | 2026-09-27 |
+| [ADR-010](ADR-010-pix-payer-name-from-billing-address.md) | Nome do pagador do Pix derivado do endereço de cobrança do cart | Aceito (não commitado) | 2026-09-29 |
 
-As datas são as dos commits em que a decisão entrou no código.
+As datas são as dos commits em que a decisão entrou no código; para um ADR proposto, a data da proposta.
 
 Modelo:
 

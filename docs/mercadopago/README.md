@@ -114,6 +114,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 ## Campos em `payment_session.data`
 
 - **Escritos pelo cliente (via allowlist):** `card_token`, `payment_method_id`, `payment_type_id` (só `credit_card`/`debit_card`), `issuer_id`, `installments`, `transaction_amount`, `amount`, `currency_code`, `cart_id`, `payer.{email, identification.{type, number}}`.
+- **Escritos pela rota de update, a partir do cart (só Pix):** `payer.first_name`/`payer.last_name`, lidos do `billing_address` do cart; o cliente não os fornece (invariante 40, [ADR-010](../decisions/ADR-010-pix-payer-name-from-billing-address.md)). O `createPixOrder` os envia porque envia `session.data.payer` (invariante 41).
 - **Escritos apenas pelo provider:** todos os `mercadopago_*`, por exemplo `mercadopago_order_id`, `mercadopago_payment_id`, status e detalhes, `mercadopago_external_reference`, `mercadopago_idempotency_key`, `mercadopago_pix_*` (QR, ticket, expiração, idempotency key, geração).
 - **Transitório, nunca persistido:** `mercadopago_pix_action`.
 - A lista de campos da Order Pix atual está em `PIX_ORDER_FIELDS` (`service.ts`).
@@ -130,4 +131,4 @@ Todos os campos acima continuam gravados, porque têm consumidor no backend: pro
 | `POST /store/mercadopago/payment-sessions/:id/pix` | Mesmo DTO da rota do cart. A capability Pix vai só nos headers de resposta. |
 | `GET /store/mercadopago/payment-access/pix` | Autorizada só pela capability no header `x-payment-access-token` (nunca query string); o cliente não informa `order_id` nem session. DTO `toPixAccessDto`: `status` do provider + `payment_window_closed` + `order_id` sempre; com `pending` e janela aberta também `charge_ref`, QR, copia e cola, ticket e `expires_at`; com a janela fechada nada pagável, qualquer que seja o status ([ADR-009](../decisions/ADR-009-payment-access-keeps-provider-status.md)). Qualquer falha → o mesmo 404 genérico. `order_id` serve só para o Next Server conferir o pedido da página. |
 
-Nunca saem para o storefront: `card_token`, `issuer_id`, `installments`, `payer`, idempotency keys, IDs do Mercado Pago (`mercadopago_order_id`, `mercadopago_payment_id`), `mercadopago_external_reference`, geração Pix, status nativos do Mercado Pago nem o status da session.
+Nunca saem para o storefront: `card_token`, `issuer_id`, `installments`, `payer` (inclusive o nome), idempotency keys, IDs do Mercado Pago (`mercadopago_order_id`, `mercadopago_payment_id`), `mercadopago_external_reference`, geração Pix, status nativos do Mercado Pago nem o status da session.

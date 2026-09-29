@@ -130,6 +130,45 @@ function buildAllowedSessionData(body: Record<string, unknown>): Record<string, 
   return allowed
 }
 
+type BillingName = {
+  first_name?: string
+  last_name?: string
+}
+
+function getBillingName(billingAddress: { first_name?: unknown; last_name?: unknown } | null | undefined): BillingName {
+  const name: BillingName = {}
+
+  for (const key of ["first_name", "last_name"] as const) {
+    const value = billingAddress?.[key]
+    if (typeof value === "string" && value.trim().length > 0) {
+      name[key] = value.trim()
+    }
+  }
+
+  return name
+}
+
+// The payer's name on a Pix charge comes only from the cart's billing address,
+// read here on the server, never from the client (sanitizePayer drops it).
+// It is persisted in session.data.payer, so createPixOrder keeps building its
+// body from persisted session data only: the same idempotency key always
+// carries the same body, whether it is sent by the prepare route, a retry or
+// authorizePix (ADR-010). Any name left in the payer of a non-Pix session is
+// removed, so it never reaches a card Order.
+function withPayerName(data: Record<string, unknown>, billingName: BillingName): Record<string, unknown> {
+  const payer = data.payer
+  if (!payer || typeof payer !== "object") {
+    return data
+  }
+
+  const { first_name: _firstName, last_name: _lastName, ...rest } = payer as Record<string, unknown>
+
+  return {
+    ...data,
+    payer: data.payment_method_id === "pix" ? { ...rest, ...billingName } : rest,
+  }
+}
+
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const paymentModuleService = req.scope.resolve(Modules.PAYMENT)
   const paymentSessionId = req.params.id
@@ -162,12 +201,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const { data } = await query.graph(
     {
       entity: "cart",
-      fields: ["id", "payment_collection.id"],
+      fields: ["id", "payment_collection.id", "billing_address.first_name", "billing_address.last_name"],
       filters: { id: cartId },
     },
     { throwIfKeyNotFound: false }
   )
-  const cart = data?.[0] as { payment_collection?: { id?: string } } | undefined
+  const cart = data?.[0] as
+    | {
+        payment_collection?: { id?: string }
+        billing_address?: { first_name?: unknown; last_name?: unknown } | null
+      }
+    | undefined
   const cartPaymentCollectionId = cart?.payment_collection?.id
 
   if (!cartPaymentCollectionId || cartPaymentCollectionId !== paymentSession.payment_collection_id) {
@@ -191,10 +235,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     id: paymentSessionId,
     currency_code: paymentSession.currency_code,
     amount: paymentSession.amount,
-    data: {
-      ...previousData,
-      ...allowedData,
-    },
+    data: withPayerName({ ...previousData, ...allowedData }, getBillingName(cart?.billing_address)),
   })
 
   // Leaving Pix revokes the session's Pix payment capabilities (ADR-007). The

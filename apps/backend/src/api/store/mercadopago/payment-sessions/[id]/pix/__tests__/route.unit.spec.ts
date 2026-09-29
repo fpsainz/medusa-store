@@ -96,7 +96,7 @@ function buildReq(overrides: {
 
   const res: any = { json: jest.fn(), setHeader: jest.fn() }
 
-  return { req, res, logger, retrievePaymentSession, updatePaymentSession, authorizePaymentSession }
+  return { req, res, logger, graph, retrievePaymentSession, updatePaymentSession, authorizePaymentSession }
 }
 
 describe("POST /store/mercadopago/payment-sessions/:id/pix — Pix payment capability", () => {
@@ -306,5 +306,73 @@ describe("POST /store/mercadopago/payment-sessions/:id/pix", () => {
 
     await expect(POST(req, res)).rejects.toThrow("cart_id is required")
     expect(retrievePaymentSession).not.toHaveBeenCalled()
+  })
+})
+
+describe("POST /store/mercadopago/payment-sessions/:id/pix — payer comes from the persisted session (ADR-010)", () => {
+  const NAMED_PIX_SESSION = {
+    ...PIX_SESSION,
+    data: {
+      ...PIX_SESSION.data,
+      payer: { ...PIX_SESSION.data.payer, first_name: "João", last_name: "Silva" },
+    },
+  }
+
+  it("PX1: hands session.data.payer to the provider unchanged", async () => {
+    const { req, res, updatePaymentSession } = buildReq({ paymentSession: NAMED_PIX_SESSION })
+
+    await POST(req, res)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data).toEqual({ ...NAMED_PIX_SESSION.data, mercadopago_pix_action: "prepare" })
+    expect(updateInput.data.payer).toEqual(NAMED_PIX_SESSION.data.payer)
+  })
+
+  it("PX2: reads the cart only for ownership and completion, never for payer data", async () => {
+    const { req, res, graph } = buildReq({ paymentSession: NAMED_PIX_SESSION })
+
+    await POST(req, res)
+
+    expect(graph).toHaveBeenCalledTimes(1)
+    const fields: string[] = (graph.mock.calls[0] as any)[0].fields
+    expect(fields).toEqual(["id", "completed_at", "payment_collection.id"])
+    expect(fields.some((field) => field.startsWith("billing_address") || field.startsWith("shipping_address"))).toBe(false)
+  })
+
+  it("PX3: a billing address changed after the payer was persisted does not change the payer of a new prepare", async () => {
+    const { req, res, updatePaymentSession } = buildReq({
+      paymentSession: NAMED_PIX_SESSION,
+      cartGraphData: [
+        {
+          id: "cart_123",
+          completed_at: null,
+          payment_collection: { id: PAYMENT_COLLECTION_ID },
+          billing_address: { first_name: "Maria", last_name: "Souza" },
+        },
+      ],
+    })
+
+    await POST(req, res)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.payer).toEqual({
+      email: "buyer@example.com",
+      identification: { type: "CPF", number: "12345678909" },
+      first_name: "João",
+      last_name: "Silva",
+    })
+  })
+
+  it("PX3: regenerate also keeps the persisted payer", async () => {
+    const { req, res, updatePaymentSession } = buildReq({
+      paymentSession: NAMED_PIX_SESSION,
+      body: { cart_id: "cart_123", regenerate: true },
+    })
+
+    await POST(req, res)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.mercadopago_pix_action).toBe("regenerate")
+    expect(updateInput.data.payer).toEqual(NAMED_PIX_SESSION.data.payer)
   })
 })

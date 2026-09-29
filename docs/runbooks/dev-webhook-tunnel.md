@@ -24,6 +24,7 @@
 - **Ferramenta e comando do túnel:** não registrados no repositório.
 - **Tipo de evento exato a marcar no painel:** [não validado].
 - O plugin/MCP do Mercado Pago tem ferramentas `save_webhook` e `notifications_history` que podem substituir a configuração manual. [não validado] neste projeto.
+  - Em 2026-09-29, o `notifications_history` voltou vazio mesmo logo depois de duas entregas desta aplicação confirmadas pelo inspetor do túnel ([E2E-B-2026-09-29](../investigations/E2E-B-2026-09-29.md#order-órfã-da-inv-003)). Para saber se uma notificação chegou, use o log do backend e o inspetor do túnel, não esse histórico.
 
 ## Diagnóstico rápido
 

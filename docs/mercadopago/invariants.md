@@ -23,10 +23,11 @@ Specs (caminhos relativos a `apps/backend/src/`):
 
 ## Escrita na Payment Session
 
-2. **O cliente nunca escreve campos `mercadopago_*`, `status`, QR/ticket, expiração nem idempotency keys.** A rota de update aceita só a allowlist de `buildAllowedSessionData`; `payer` é reduzido a `email` + `identification.{type, number}`. — `payment-sessions/[id]/route.ts`. Teste: `PS`.
+2. **O cliente nunca escreve campos `mercadopago_*`, `status`, QR/ticket, expiração nem idempotency keys.** A rota de update aceita só a allowlist de `buildAllowedSessionData`; o `payer` enviado pelo cliente é reduzido a `email` + `identification.{type, number}` (o nome do pagador Pix é acrescentado pelo servidor: invariante 40). — `payment-sessions/[id]/route.ts`. Teste: `PS`.
 3. **Toda rota que recebe `payment_session_id` + `cart_id` confere a posse:** a session precisa pertencer ao `payment_collection` do cart informado e ao provider `pp_mercadopago`. — rotas `payment-sessions/[id]` e `payment-sessions/[id]/pix`. Testes: `PS`, `PX`.
 4. **Atualizar a session nunca autoriza nem captura.** `updatePayment` e as rotas de update/prepare não chamam `authorizePayment` nem `cart.complete`. — `service.ts`, rotas. Testes: `PS`, `PX`, `S`.
 5. **`mercadopago_pix_action` é transitório:** removido no início de `updatePayment`, nunca persistido. A rota de update comum o descarta pela allowlist. — `service.ts`. Teste: `S` (lifecycle Review).
+40. **O nome do pagador do Pix vem somente do `billing_address` do cart, lido no servidor pela rota de update, e só para sessions Pix.** A rota lê `billing_address.first_name`/`last_name` na mesma consulta da verificação de posse e grava em `session.data.payer` apenas valores não vazios (aparados); `first_name`/`last_name` enviados pelo cliente são descartados. Numa session que não é Pix, qualquer nome no `payer` (inclusive herdado de uma seleção Pix anterior) é removido. Sem `payer`, nenhum é criado. — `payment-sessions/[id]/route.ts` (`getBillingName`, `withPayerName`). Teste: `PS`. [ADR-010](../decisions/ADR-010-pix-payer-name-from-billing-address.md)
 
 ## Pix
 
@@ -41,6 +42,7 @@ Specs (caminhos relativos a `apps/backend/src/`):
 25. **Toda cobrança Pix é criada com prazo explícito e deadline conservadora.** `createPixOrder` envia `transactions.payments[].expiration_time: "PT1H"` e grava em `mercadopago_pix_expires_at` a menor entre início da requisição + 1 h, `created_date` + 1 h e qualquer data absoluta válida da resposta; durações e valores inválidos são ignorados. Uma nova tentativa de criação usa o mesmo corpo e a mesma idempotency key. — `createPixOrder`, `computePixDeadline`. Teste: `S`. [ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)
 26. **O `cart_id` deixa de ser credencial depois da conclusão:** `GET /store/mercadopago/carts/:id/pix` responde 410 sem corpo quando o cart tem `completed_at`, sem ler a session nem chamar o Mercado Pago. — `carts/[id]/pix/route.ts`. Teste: `CX`. [ADR-007](../decisions/ADR-007-payment-access-capability-for-pix.md)
 39. **Depois da deadline local, a Review não recebe nada pagável, e o status continua o do provider.** A partir de `mercadopago_pix_expires_at`, `toPixPaymentDto` (`carts/:id/pix` e prepare) omite `qr_code`, `qr_code_base64` e `ticket_url` e devolve `payment_window_closed: true`; o `status` não é convertido em `expired`/`canceled`. Sem deadline armazenada, nada muda. — `toPixPaymentDto`. Testes: `S`, `CX`. [ADR-008](../decisions/ADR-008-pix-payment-window-hides-artifacts.md)
+41. **O body de `createPixOrder` depende só de `session.data` persistida e de constantes:** mesma idempotency key ⇒ mesmo body. Prepare, nova tentativa depois de falha (nada é gravado quando o provider lança) e o fallback `authorizePix` reconstroem a mesma geração com o mesmo body. A rota de prepare não lê endereço nem monta `payer`: repassa `session.data`. — `createPixOrder`, `getPixIdempotencyKey`, `payment-sessions/[id]/pix/route.ts`. Testes: `S`, `PX`. [ADR-010](../decisions/ADR-010-pix-payer-name-from-billing-address.md)
 
 ## Exposição de dados ao storefront
 

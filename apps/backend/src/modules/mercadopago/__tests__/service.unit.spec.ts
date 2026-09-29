@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+
 const orderCreateMock = jest.fn()
 const orderGetMock = jest.fn()
 const orderCancelMock = jest.fn()
@@ -1022,6 +1024,105 @@ describe("MercadoPagoPaymentProviderService — Pix charge lifecycle (Review)", 
       await expect(provider.authorizePayment({ data: prepared.data })).rejects.toThrow(
         "unrecognized Pix order status"
       )
+    })
+  })
+
+  describe("payer name and idempotency (ADR-010)", () => {
+    const NAMED_PAYER = { email: "buyer@example.com", first_name: "João", last_name: "Silva" }
+
+    const pixKey = (generation: number) =>
+      createHash("sha256").update(`payses_base_key:pix:50.00:${generation}`).digest("hex")
+
+    // session.data as the update route persists it (update without a Pix
+    // action), i.e. what every later prepare, retry or authorizePix reads.
+    async function persisted(provider: any, payer: Record<string, unknown>) {
+      const updated = await provider.updatePayment({
+        amount: 50,
+        currency_code: "brl",
+        data: { ...PIX_SESSION_DATA, payer },
+      })
+      return updated.data
+    }
+
+    it("S1: sends the first/last name persisted in session.data.payer", async () => {
+      orderCreateMock.mockResolvedValue(pixOrder())
+      const provider = buildProvider()
+
+      await prepare(provider, await persisted(provider, NAMED_PAYER))
+
+      const [[createInput]] = orderCreateMock.mock.calls
+      expect(createInput.body.payer).toEqual(NAMED_PAYER)
+    })
+
+    it("S2: does not invent a first/last name when the payer has none", async () => {
+      orderCreateMock.mockResolvedValue(pixOrder())
+      const provider = buildProvider()
+
+      await prepare(provider, await persisted(provider, { email: "buyer@example.com" }))
+
+      const [[createInput]] = orderCreateMock.mock.calls
+      expect(createInput.body.payer).toEqual({ email: "buyer@example.com" })
+      expect(createInput.body.payer).not.toHaveProperty("first_name")
+      expect(createInput.body.payer).not.toHaveProperty("last_name")
+    })
+
+    it("S3: a retry after a failed create sends the same key and a deeply equal body, same generation", async () => {
+      orderCreateMock.mockRejectedValueOnce(new Error("network timeout")).mockResolvedValueOnce(pixOrder())
+      const provider = buildProvider()
+      const data = await persisted(provider, NAMED_PAYER)
+
+      // The failed prepare persists nothing (the Payment Module only writes the
+      // session after the provider returns), so the retry reads the same data.
+      await expect(prepare(provider, data)).rejects.toThrow("network timeout")
+      const result = await prepare(provider, data)
+
+      expect(orderCreateMock).toHaveBeenCalledTimes(2)
+      const [[first], [second]] = orderCreateMock.mock.calls
+      expect(second).toEqual(first)
+      expect(first.requestOptions.idempotencyKey).toBe(pixKey(0))
+      expect(second.body.payer).toEqual(NAMED_PAYER)
+      expect(result.data.mercadopago_pix_generation).toBe(0)
+      expect(result.data.mercadopago_pix_idempotency_key).toBe(pixKey(0))
+    })
+
+    it("S4: the authorizePix fallback sends the same key and body as the prepare for the same persisted data", async () => {
+      orderCreateMock.mockResolvedValue(pixOrder())
+      const provider = buildProvider()
+      const data = await persisted(provider, NAMED_PAYER)
+
+      await prepare(provider, data)
+      await provider.authorizePayment({ data })
+
+      expect(orderCreateMock).toHaveBeenCalledTimes(2)
+      const [[fromPrepare], [fromFallback]] = orderCreateMock.mock.calls
+      expect(fromFallback).toEqual(fromPrepare)
+      expect(fromFallback.requestOptions.idempotencyKey).toBe(pixKey(0))
+    })
+
+    it("S5: regenerate moves to the next generation and key and keeps the payer", async () => {
+      orderCreateMock
+        .mockResolvedValueOnce(pixOrder())
+        .mockResolvedValueOnce(pixOrder({ id: "ORD_PIX_B" }))
+      orderGetMock.mockResolvedValue(pixOrder())
+      orderCancelMock.mockResolvedValue({})
+      const provider = buildProvider()
+
+      const first = await prepare(provider, await persisted(provider, NAMED_PAYER))
+      const regenerated = await prepare(provider, first.data, "regenerate")
+
+      expect(orderCreateMock).toHaveBeenCalledTimes(2)
+      const [[firstCreate], [secondCreate]] = orderCreateMock.mock.calls
+      expect(firstCreate.requestOptions.idempotencyKey).toBe(pixKey(0))
+      expect(secondCreate.requestOptions.idempotencyKey).toBe(pixKey(1))
+      expect(secondCreate.body.payer).toEqual(NAMED_PAYER)
+      expect(regenerated.data.mercadopago_pix_generation).toBe(1)
+      expect(regenerated.data.payer).toEqual(NAMED_PAYER)
+      // Cancellation of the replaced charge keeps its own key, derived from the
+      // replaced charge's key.
+      expect(orderCancelMock).toHaveBeenCalledWith({
+        id: "ORD_PIX_A",
+        requestOptions: { idempotencyKey: createHash("sha256").update(`${pixKey(0)}:cancel`).digest("hex") },
+      })
     })
   })
 

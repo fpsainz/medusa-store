@@ -360,3 +360,197 @@ describe("mercadopago payment session route", () => {
     await expect(POST(req, res)).rejects.toThrow(/does not belong to the Mercado Pago provider/)
   })
 })
+
+describe("mercadopago payment session route — Pix payer name from the billing address (ADR-010)", () => {
+  const cartWithBilling = (billing_address: unknown) => [
+    { id: "cart_123", payment_collection: { id: PAYMENT_COLLECTION_ID }, billing_address },
+  ]
+  const pixBody = (payer: Record<string, unknown>) => ({
+    cart_id: "cart_123",
+    payment_method_id: "pix",
+    amount: 100,
+    payer,
+  })
+
+  it("reads the billing name in the same cart query used for the ownership check", async () => {
+    const { req, graph } = buildReq({
+      body: pixBody({ email: "buyer@example.com" }),
+      cartGraphData: cartWithBilling({ first_name: "João", last_name: "Silva" }),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    expect(graph).toHaveBeenCalledTimes(1)
+    expect((graph.mock.calls[0] as any)[0].fields).toEqual(
+      expect.arrayContaining(["payment_collection.id", "billing_address.first_name", "billing_address.last_name"])
+    )
+  })
+
+  it("PS1: persists the billing first/last name in a Pix session's payer, keeping the rest of the payer", async () => {
+    const { req, updatePaymentSession } = buildReq({
+      body: pixBody({ email: "buyer@example.com", identification: { type: "CPF", number: "12345678909" } }),
+      cartGraphData: cartWithBilling({ first_name: "João", last_name: "Silva" }),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.payer).toEqual({
+      email: "buyer@example.com",
+      identification: { type: "CPF", number: "12345678909" },
+      first_name: "João",
+      last_name: "Silva",
+    })
+  })
+
+  it("PS2: ignores a first/last name sent by the client; the name always comes from the billing address", async () => {
+    const { req, updatePaymentSession } = buildReq({
+      body: pixBody({ email: "buyer@example.com", first_name: "Atacante", last_name: "Nome" }),
+      cartGraphData: cartWithBilling({ first_name: "João", last_name: "Silva" }),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.payer).toEqual({ email: "buyer@example.com", first_name: "João", last_name: "Silva" })
+  })
+
+  it("PS2: without a billing name, a client-sent name is still not persisted", async () => {
+    const { req, updatePaymentSession } = buildReq({
+      body: pixBody({ email: "buyer@example.com", first_name: "Atacante", last_name: "Nome" }),
+      cartGraphData: cartWithBilling(null),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.payer).toEqual({ email: "buyer@example.com" })
+  })
+
+  it.each([
+    ["absent", {}],
+    ["empty", { first_name: "", last_name: "" }],
+    ["whitespace only", { first_name: "   ", last_name: "\t" }],
+    ["not a string", { first_name: 1, last_name: null }],
+  ])("PS3: omits the name when the billing name is %s (no empty string, no placeholder)", async (_label, billing) => {
+    const { req, updatePaymentSession } = buildReq({
+      body: pixBody({ email: "buyer@example.com" }),
+      cartGraphData: cartWithBilling(billing),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.payer).toEqual({ email: "buyer@example.com" })
+  })
+
+  it("PS3: keeps only the part of the name that is present and trims it", async () => {
+    const { req, updatePaymentSession } = buildReq({
+      body: pixBody({ email: "buyer@example.com" }),
+      cartGraphData: cartWithBilling({ first_name: "  APRO  ", last_name: " " }),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.payer).toEqual({ email: "buyer@example.com", first_name: "APRO" })
+  })
+
+  it("replaces a name persisted earlier with the current billing name when the Pix data is resubmitted", async () => {
+    const { req, updatePaymentSession } = buildReq({
+      body: pixBody({ email: "buyer@example.com" }),
+      paymentSession: {
+        id: "payses_123",
+        amount: 100,
+        currency_code: "BRL",
+        provider_id: "pp_mercadopago",
+        payment_collection_id: PAYMENT_COLLECTION_ID,
+        data: { payment_method_id: "pix", payer: { email: "buyer@example.com", first_name: "João", last_name: "Silva" } },
+      },
+      cartGraphData: cartWithBilling({ first_name: "Maria", last_name: "Silva" }),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.payer).toEqual({ email: "buyer@example.com", first_name: "Maria", last_name: "Silva" })
+  })
+
+  it("does not create a payer when the Pix update carries none", async () => {
+    const { req, updatePaymentSession } = buildReq({
+      body: { cart_id: "cart_123", payment_method_id: "pix", amount: 100 },
+      cartGraphData: cartWithBilling({ first_name: "João", last_name: "Silva" }),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data).not.toHaveProperty("payer")
+  })
+
+  describe("PS4: card sessions", () => {
+    const cardBody = {
+      cart_id: "cart_123",
+      card_token: "cardtoken_123",
+      payment_method_id: "visa",
+      payment_type_id: "credit_card",
+      installments: 1,
+      transaction_amount: 100,
+      payer: { email: "buyer@example.com", identification: { type: "CPF", number: "12345678909" } },
+    }
+
+    it("never adds the billing name to a card session's payer", async () => {
+      const { req, updatePaymentSession } = buildReq({
+        body: cardBody,
+        cartGraphData: cartWithBilling({ first_name: "João", last_name: "Silva" }),
+      })
+
+      await POST(req, { json: jest.fn() } as any)
+
+      const [[updateInput]] = updatePaymentSession.mock.calls
+      expect(updateInput.data.payer).toEqual(cardBody.payer)
+    })
+
+    it("does not carry a name persisted by an earlier Pix selection into the card payer", async () => {
+      const { req, updatePaymentSession } = buildReq({
+        body: cardBody,
+        paymentSession: {
+          id: "payses_123",
+          amount: 100,
+          currency_code: "BRL",
+          provider_id: "pp_mercadopago",
+          payment_collection_id: PAYMENT_COLLECTION_ID,
+          data: { payment_method_id: "pix", payer: { email: "buyer@example.com", first_name: "João", last_name: "Silva" } },
+        },
+        cartGraphData: cartWithBilling({ first_name: "João", last_name: "Silva" }),
+      })
+
+      await POST(req, { json: jest.fn() } as any)
+
+      const [[updateInput]] = updatePaymentSession.mock.calls
+      expect(updateInput.data.payer).toEqual(cardBody.payer)
+      expect(updateInput.data.payment_method_id).toBe("visa")
+    })
+
+    it("removes an inherited Pix name even when the card update sends no payer", async () => {
+      const { payer: _payer, ...cardBodyWithoutPayer } = cardBody
+      const { req, updatePaymentSession } = buildReq({
+        body: cardBodyWithoutPayer,
+        paymentSession: {
+          id: "payses_123",
+          amount: 100,
+          currency_code: "BRL",
+          provider_id: "pp_mercadopago",
+          payment_collection_id: PAYMENT_COLLECTION_ID,
+          data: { payment_method_id: "pix", payer: { email: "buyer@example.com", first_name: "João", last_name: "Silva" } },
+        },
+        cartGraphData: cartWithBilling({ first_name: "João", last_name: "Silva" }),
+      })
+
+      await POST(req, { json: jest.fn() } as any)
+
+      const [[updateInput]] = updatePaymentSession.mock.calls
+      expect(updateInput.data.payer).toEqual({ email: "buyer@example.com" })
+    })
+  })
+})
