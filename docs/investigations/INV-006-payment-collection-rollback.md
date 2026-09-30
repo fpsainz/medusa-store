@@ -273,3 +273,25 @@ Fontes: [sandbox 2026-09-29] [banco 2026-09-29].
 - [MCP 2026-09-29] `notifications_history` registra uma notificação `order` para `ORDTST01M3Q8…` às 19:52 (1 tentativa, 404: túnel sem este backend). É a única Order com esse prefixo no período; o MCP trunca o ID e não mostra o `action`.
 - Mesmo entregue, a notificação não mudaria o Medusa: `canceled`/`expired` vira `not_supported` em `getWebhookActionAndData` ([webhook.md](../mercadopago/webhook.md#processamento-no-provider)), e nada recalcula a collection. O #97 fica como exemplo permanente do estado inconsistente anterior à correção: pedido `pending` e collection `canceled`, agora sem cobrança pagável.
 - Diferente do Pix vencido de 2026-09-27, cuja Order passou a `canceled`: aqui o `status_detail` da Order e o status da transação ficaram `expired`.
+
+## Regressão depois de `6f5acdd` (sandbox, 2026-09-30)
+
+Objetivo: confirmar o caso D (cartão capturado) com o código da reconciliação da tentativa de cartão (INV-009, `6f5acdd`). Nenhum código foi alterado.
+
+**Método:** o mesmo da [seção acima](#método), com três diferenças:
+- pedido **#124** (`order_01M3SEBGSDTWWVTJ3KYHS3JF97`), já existente, criado pelo caminho da tentativa: Order MP `ORDTST01M3SEBAYCCRSE785K9FA82RXS`, `processed/accredited`, R$ 510 capturados, sem reembolso;
+- secret API key temporária `apk_01M3SF9WR6KGZN94MJD6C72E5S`, revogada no fim (token não registrado);
+- túnel ativo: as notificações chegaram ao backend.
+
+**Resultado: ✅ aprovado** [banco 2026-09-30] [sandbox 2026-09-30]:
+- a rota respondeu 401 sem credencial; com a credencial, `POST /admin/orders/:id/cancel` → 200, pedido `canceled` (versão 2);
+- chamadas do backend ao Mercado Pago durante a rota: **1** `POST /v1/orders/{id}/refund` sem body → 201 (reembolso total do core pelo provider). Não houve `POST …/cancel`, `POST /v1/orders` nem chamada do caminho Pix;
+- houve também 1 `GET /v1/orders/{id}` 200 no mesmo intervalo. Ele vem da notificação real dessa Order (`POST /hooks/payment/mercadopago`, 200), que chegou ao backend enquanto a rota ainda respondia, depois do reembolso. O webhook sempre lê a Order por `GET`. A atribuição vem da ordem no log e da coincidência de horário; não há rastreio por requisição;
+- Medusa:
+  - 1 Refund de R$ 510 (`ref_01M3SF9XPD9B3ZR8E4FJ2Y0SJV`);
+  - o Payment continua com 1 captura e sem `canceled_at`;
+  - collection `canceled`, com `refunded_amount` 510;
+  - session do cartão inalterada (`authorized`, mesmo `updated_at`).
+- Mercado Pago: Order `refunded/refunded`, payment `refunded/refunded`, 1 reembolso `processed` de R$ 510. Nenhuma cobrança nova.
+
+O resultado é igual ao do #101: o cartão capturado só é reembolsado pelo core, e o wrapper do ADR-013 não age sobre o cartão.
