@@ -191,6 +191,27 @@ function toPositiveDecimalString(value: unknown): string | undefined {
 // errors: invalid_idempotency_key_length).
 const MAX_IDEMPOTENCY_KEY_LENGTH = 128
 
+// Deterministic JSON: object keys sorted at every level, array order kept,
+// undefined properties dropped (as JSON.stringify does). The same body always
+// serializes the same way, whatever order its keys were built or read in
+// (session.data comes back from a jsonb column).
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => (item === undefined ? 'null' : canonicalJson(item))).join(',')}]`
+  }
+
+  if (value && typeof value === 'object') {
+    const entries = Object.keys(value as Record<string, unknown>)
+      .sort()
+      .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`)
+
+    return `{${entries.join(',')}}`
+  }
+
+  return JSON.stringify(value)
+}
+
 function getStringField(data: PaymentData | null | undefined, key: string): string | undefined {
   const value = data?.[key]
   return typeof value === 'string' ? value : undefined
@@ -580,12 +601,27 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
     return Number(orderAmount).toFixed(2) === Number(sessionAmount).toFixed(2)
   }
 
+  // Idempotency key for creating a card Order (ADR-014). The Orders API
+  // answers a reused key with the original result only when the body is the
+  // same, and with 409 idempotency_key_already_used when it differs. So the
+  // key is derived from the session's base key (never replacing it) and the
+  // canonical body actually sent: a retry of the same attempt rebuilds the
+  // same body from the persisted session data and gets the same key, while a
+  // new attempt (new card token, installments, payer...) gets a new one.
+  private getCardOrderIdempotencyKey(baseKey: string, body: Record<string, unknown>): string {
+    const bodyHash = createHash('sha256').update(canonicalJson(body)).digest('hex')
+
+    return createHash('sha256')
+      .update(`${baseKey}:card:${bodyHash}`)
+      .digest('hex')
+  }
+
   // Idempotency key for creating a Pix Order. Derived from (never replacing)
-  // the session's existing key, so card orders keep using the base key
-  // unchanged and cannot collide with a Pix Order created earlier for the
-  // same session. The amount is part of it, and the generation changes on
-  // every replacement, so a regenerated Pix never gets back the expired
-  // Order Mercado Pago already associated with the previous key.
+  // the session's existing key, so it cannot collide with a card Order key
+  // or a Pix Order created earlier for the same session. The amount is part
+  // of it, and the generation changes on every replacement, so a regenerated
+  // Pix never gets back the expired Order Mercado Pago already associated
+  // with the previous key.
   private getPixIdempotencyKey(data: PaymentData, amount: number, generation: number, context?: Record<string, unknown>): string {
     const baseKey = this.getIdempotencyKey({ ...data, amount }, context)
 
@@ -1068,31 +1104,33 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
       )
     }
 
-    const order = await this.orderClient.create({
-      body: {
-        type: 'online',
-        external_reference: cartId,
-        total_amount: amount.toFixed(2),
-        currency: 'BRL',
-        processing_mode: 'automatic',
-        description: `Medusa cart ${cartId}`,
-        payer,
-        transactions: {
-          payments: [
-            {
-              amount: amount.toFixed(2),
-              payment_method: {
-                id: paymentMethodId,
-                token: cardToken,
-                type: paymentTypeId,
-                installments,
-              },
+    const body = {
+      type: 'online',
+      external_reference: cartId,
+      total_amount: amount.toFixed(2),
+      currency: 'BRL',
+      processing_mode: 'automatic',
+      description: `Medusa cart ${cartId}`,
+      payer,
+      transactions: {
+        payments: [
+          {
+            amount: amount.toFixed(2),
+            payment_method: {
+              id: paymentMethodId,
+              token: cardToken,
+              type: paymentTypeId,
+              installments,
             },
-          ],
-        },
+          },
+        ],
       },
+    }
+
+    const order = await this.orderClient.create({
+      body,
       requestOptions: {
-        idempotencyKey,
+        idempotencyKey: this.getCardOrderIdempotencyKey(idempotencyKey, body),
       },
     })
 

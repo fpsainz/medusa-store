@@ -24,6 +24,7 @@ Regras:
 | [INV-005](INV-005-cancel-order-with-pending-pix.md) | Cancelar pedido Medusa com Pix pendente não cancela a Order Mercado Pago | concluída (hook `orderCanceled`, [ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md); E2E sandbox) |
 | [INV-006](INV-006-payment-collection-rollback.md) | Payment Collection fica `canceled` quando o `cancelOrderWorkflow` é revertido (compensation do core falha) | concluída (wrapper que cancela o Pix antes do core, [ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md); E2E A/B/C/D) |
 | [INV-007](INV-007-payment-button-first-session.md) | `PaymentButton` escolhe o botão por `payment_sessions[0]` | concluída (B: o core garante no máximo uma session por collection; sem bug; corrida concorrente [não validado]) |
+| [INV-008](INV-008-card-idempotency-key-per-session.md) | Idempotency key do cartão estável durante a Payment Session | concluída (402 → `409` confirmado em sandbox; key derivada do body, [ADR-014](../decisions/ADR-014-card-order-idempotency-key-from-body.md); regressão E2E) |
 | [E2E-B-PRIME-2026-09-29](E2E-B-PRIME-2026-09-29.md) | E2E do cenário B' com o nome de cobrança `APRO` e webhook real (registro de execução, fora da numeração `INV`) | concluída (CONFIRMADO) |
 | [E2E-B-2026-09-29](E2E-B-2026-09-29.md) | E2E do cenário B com o nome de cobrança `APRO`, segunda janela da Order órfã da INV-003 e tempos de aprovação (registro de execução, fora da numeração `INV`) | concluída (NÃO REPRODUZIDO) |
 

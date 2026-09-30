@@ -21,6 +21,7 @@ Só viram ADR decisões com evidência no código ou no Git. O que não foi deci
 | [ADR-011](ADR-011-mercadopago-refund-contract.md) | Contrato de reembolso do provider Mercado Pago (valor, idempotency key por reembolso, total × parcial) | Aceito | 2026-09-29 |
 | [ADR-012](ADR-012-cancel-pending-pix-on-order-cancel.md) | Cancelar o Pix pendente no hook `orderCanceled` do `cancelOrderWorkflow` | Substituído em parte pelo ADR-013 (o hook continua como rede de segurança) | 2026-09-29 |
 | [ADR-013](ADR-013-cancel-order-wrapper-cancels-pix-first.md) | Cancelar o Pix pendente antes do `cancelOrderWorkflow` (workflow wrapper na rota do Admin) | Aceito | 2026-09-29 |
+| [ADR-014](ADR-014-card-order-idempotency-key-from-body.md) | Idempotency key da Order de cartão derivada da chave base + body canônico | Aceito | 2026-09-29 |
 
 As datas são as dos commits em que a decisão entrou no código; para um ADR proposto, a data da proposta.
 

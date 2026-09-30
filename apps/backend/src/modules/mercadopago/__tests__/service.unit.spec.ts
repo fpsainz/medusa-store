@@ -1300,3 +1300,206 @@ describe("toPixPaymentDto", () => {
     expect(toPixPaymentDto({ status: "authorized", data }).status).toBe("approved")
   })
 })
+
+// ADR-014: the card Order idempotency key is derived from the session's base
+// key and the canonical body sent, so a retry of the same attempt reuses it
+// and any new attempt (the E2E of INV-008: 402, then a new card → 409) gets a
+// new one.
+describe("MercadoPagoPaymentProviderService — card Order idempotency key (ADR-014)", () => {
+  function buildProvider() {
+    const ProviderClass = MercadoPagoPaymentProviderService as any
+    return new ProviderClass({}, { access_token: "test-access-token" })
+  }
+
+  const CARD_SESSION_DATA = {
+    payment_method_id: "visa",
+    payment_type_id: "credit_card",
+    card_token: "card_token_attempt_1",
+    installments: 1,
+    amount: "110.00",
+    cart_id: "cart_card_key",
+    payer: { email: "buyer@example.com", identification: { type: "CPF", number: "12345678909" } },
+    mercadopago_idempotency_key: "payses_card_base",
+  }
+
+  function mockApproved() {
+    orderCreateMock.mockResolvedValue({
+      id: "ORD_CARD_1",
+      status: "processed",
+      status_detail: "accredited",
+      transactions: { payments: [{ id: "PAY_CARD_1", status: "processed", status_detail: "accredited" }] },
+    })
+  }
+
+  function mercadoPagoApiError(status: number, code: string) {
+    return Object.assign(new Error("MercadoPago API error"), { status, errors: [{ code }] })
+  }
+
+  async function sentKey(provider: any, data: Record<string, unknown>) {
+    await provider.authorizePayment({ data })
+    const calls = orderCreateMock.mock.calls
+    return calls[calls.length - 1][0].requestOptions.idempotencyKey as string
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockApproved()
+  })
+
+  it("the same session data (a retried Place order) sends the same key and a deeply equal body", async () => {
+    const provider = buildProvider()
+
+    const first = await sentKey(provider, CARD_SESSION_DATA)
+    const second = await sentKey(provider, { ...CARD_SESSION_DATA })
+
+    expect(second).toBe(first)
+    expect(orderCreateMock.mock.calls[1][0].body).toEqual(orderCreateMock.mock.calls[0][0].body)
+  })
+
+  it("the key is sha256(<base>:card:<sha256(canonical body)>), within the 128-character limit", async () => {
+    const provider = buildProvider()
+
+    const key = await sentKey(provider, CARD_SESSION_DATA)
+    const { body } = orderCreateMock.mock.calls[0][0]
+    const canonical = (value: any): string =>
+      Array.isArray(value)
+        ? `[${value.map(canonical).join(",")}]`
+        : value && typeof value === "object"
+          ? `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(",")}}`
+          : JSON.stringify(value)
+    const bodyHash = createHash("sha256").update(canonical(body)).digest("hex")
+
+    expect(key).toBe(createHash("sha256").update(`payses_card_base:card:${bodyHash}`).digest("hex"))
+    expect(key.length).toBeLessThanOrEqual(128)
+  })
+
+  it("keeps the base key in session data and never sends it as the Order key", async () => {
+    const provider = buildProvider()
+
+    const result = await provider.authorizePayment({ data: CARD_SESSION_DATA })
+    const key = orderCreateMock.mock.calls[0][0].requestOptions.idempotencyKey
+
+    expect(result.data.mercadopago_idempotency_key).toBe("payses_card_base")
+    expect(key).not.toBe("payses_card_base")
+    expect(key).toMatch(/^[0-9a-f]{64}$/)
+    // The derived key is not persisted as session state.
+    expect(Object.values(result.data)).not.toContain(key)
+  })
+
+  it("a new card token (new attempt in the same session) sends a different key", async () => {
+    const provider = buildProvider()
+
+    const first = await sentKey(provider, CARD_SESSION_DATA)
+    const second = await sentKey(provider, {
+      ...CARD_SESSION_DATA,
+      card_token: "card_token_attempt_2",
+      payment_method_id: "master",
+    })
+
+    expect(second).not.toBe(first)
+  })
+
+  it.each([
+    ["installments", { installments: 3 }],
+    ["payer", { payer: { email: "other@example.com", identification: { type: "CPF", number: "12345678909" } } }],
+    ["card type", { payment_type_id: "debit_card", payment_method_id: "debelo" }],
+    ["amount", { amount: "120.00" }],
+  ])("a different %s with the same token is a different body, so a different key", async (_label, change) => {
+    const provider = buildProvider()
+
+    const first = await sentKey(provider, CARD_SESSION_DATA)
+    const second = await sentKey(provider, { ...CARD_SESSION_DATA, ...change })
+
+    expect(second).not.toBe(first)
+  })
+
+  it("the key does not depend on the key order of the persisted data (jsonb)", async () => {
+    const provider = buildProvider()
+
+    const first = await sentKey(provider, CARD_SESSION_DATA)
+    const second = await sentKey(provider, {
+      ...CARD_SESSION_DATA,
+      payer: { identification: { number: "12345678909", type: "CPF" }, email: "buyer@example.com" },
+    })
+
+    expect(second).toBe(first)
+  })
+
+  it("another session (another base key) with the same card data sends a different key", async () => {
+    const provider = buildProvider()
+
+    const first = await sentKey(provider, CARD_SESSION_DATA)
+    const second = await sentKey(provider, { ...CARD_SESSION_DATA, mercadopago_idempotency_key: "payses_card_other" })
+
+    expect(second).not.toBe(first)
+  })
+
+  it.each([
+    [402, "failed"],
+    [409, "idempotency_key_already_used"],
+  ])("an HTTP %s from the Orders API is propagated and nothing is returned to persist", async (status, code) => {
+    const error = mercadoPagoApiError(status, code)
+    orderCreateMock.mockReset()
+    orderCreateMock.mockRejectedValue(error)
+    const provider = buildProvider()
+    const data = JSON.parse(JSON.stringify(CARD_SESSION_DATA))
+
+    await expect(provider.authorizePayment({ data })).rejects.toBe(error)
+
+    expect(orderCreateMock).toHaveBeenCalledTimes(1)
+    // The Payment Module only writes what the provider returns: after a throw
+    // the session keeps its data, and the input was not mutated either.
+    expect(data).toEqual(CARD_SESSION_DATA)
+  })
+
+  it("a retry after a failed create sends the same key and body again", async () => {
+    orderCreateMock.mockReset()
+    orderCreateMock.mockRejectedValueOnce(mercadoPagoApiError(500, "internal_error"))
+    mockApproved()
+    const provider = buildProvider()
+
+    await expect(provider.authorizePayment({ data: CARD_SESSION_DATA })).rejects.toThrow()
+    await provider.authorizePayment({ data: CARD_SESSION_DATA })
+
+    const [first, second] = orderCreateMock.mock.calls.map((call) => call[0])
+    expect(second.requestOptions.idempotencyKey).toBe(first.requestOptions.idempotencyKey)
+    expect(second.body).toEqual(first.body)
+  })
+
+  it("Pix keeps its previous key: sha256(<base>:pix:<amount>:<generation>), unaffected by the card derivation", async () => {
+    orderCreateMock.mockReset()
+    orderCreateMock.mockResolvedValue({
+      id: "ORD_PIX_KEY",
+      status: "action_required",
+      status_detail: "waiting_transfer",
+      total_amount: "50.00",
+      transactions: {
+        payments: [
+          {
+            id: "PAY_PIX_KEY",
+            status: "action_required",
+            status_detail: "waiting_transfer",
+            payment_method: { qr_code: "000201", qr_code_base64: "iVBO", ticket_url: "https://example.com/t" },
+          },
+        ],
+      },
+    })
+    const provider = buildProvider()
+
+    await provider.updatePayment({
+      amount: 50,
+      currency_code: "brl",
+      data: {
+        payment_method_id: "pix",
+        cart_id: "cart_pix_key",
+        payer: { email: "buyer@example.com" },
+        mercadopago_idempotency_key: "payses_card_base",
+        mercadopago_pix_action: "prepare",
+      },
+    })
+
+    expect(orderCreateMock.mock.calls[0][0].requestOptions.idempotencyKey).toBe(
+      createHash("sha256").update("payses_card_base:pix:50.00:0").digest("hex")
+    )
+  })
+})

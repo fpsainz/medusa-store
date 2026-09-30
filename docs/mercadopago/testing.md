@@ -12,7 +12,7 @@ Resultado em 2026-09-29, com o workflow de cancelamento que cancela o Pix antes 
 
 | Spec (em `apps/backend/src/`) | Cobre |
 |---|---|
-| `modules/mercadopago/__tests__/service.unit.spec.ts` | `authorizePayment` (cartão e Pix), discriminador Pix, ciclo da cobrança Pix na Review (prepare/reuse/regenerate/invalidate), `deletePayment`, autorização depois da Review, respostas inesperadas da API, `normalizePixStatus`, `toPixPaymentDto` |
+| `modules/mercadopago/__tests__/service.unit.spec.ts` | `authorizePayment` (cartão e Pix), idempotency key da Order de cartão derivada do body (ADR-014), discriminador Pix, ciclo da cobrança Pix na Review (prepare/reuse/regenerate/invalidate), `deletePayment`, autorização depois da Review, respostas inesperadas da API, `normalizePixStatus`, `toPixPaymentDto` |
 | `api/hooks/payment/[provider]/__tests__/route.unit.spec.ts` | Todo o webhook: comportamento do core, validações, HMAC, códigos de resposta, correlação, `getWebhookActionAndData` |
 | `api/store/mercadopago/payment-sessions/[id]/__tests__/route.unit.spec.ts` | Allowlist, posse da session, provider, não autorização |
 | `api/store/mercadopago/payment-sessions/[id]/pix/__tests__/route.unit.spec.ts` | Prepare/regenerate, session já autorizada, posse, cart completo, rejeição de sessions de cartão |
