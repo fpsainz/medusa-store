@@ -225,7 +225,7 @@ Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investi
    - **Antes:** devolvia `status`, `qr_code`, `qr_code_base64`, `ticket_url` e `expires_at` da primeira session `pp_mercadopago` do pedido, sem checar se era Pix, para quem conhecesse o ID.
    - **Depois:** só `status` e `ticket_url`, e só para uma session Pix; pedido de cartão → 404. A página do pedido trata qualquer resposta não 404 como Pix. Acesso inalterado, conforme a decisão de não exigir autenticação [decisão humana 2026-09-27].
    - ✅ Testes unitários (`OX`, 10 testes; 162 no total), `tsc` nos dois apps. ⚠ Página do pedido não reexecutada em E2E depois da mudança.
-5. 🔍 **`PaymentButton` escolhe o botão por `payment_sessions[0]`.** Pergunta: a ordem de `payment_sessions` é garantida pelo Medusa neste fluxo, ou o código assume uma posição arbitrária? Não classificar como bug antes de verificar a garantia do framework.
+5. ✅ **`PaymentButton` escolhe o botão por `payment_sessions[0]`** ([INV-007](investigations/INV-007-payment-button-first-session.md), concluída em 2026-09-29, sem bug). A ordem não é garantida, mas o `createPaymentSessionsWorkflow` do Medusa 2.20.1 apaga as sessions anteriores ao criar uma nova, então `[0]` é a única session; 106 de 106 collections com uma session [banco 2026-09-29]. ⚠ Corrida entre inicializações concorrentes [não validado]; se ocorrer, é do core (`completeCartWorkflow` também usa `[0]`).
 
 ### Baixa
 
