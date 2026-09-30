@@ -2,14 +2,14 @@
 
 > Status: **concluída** (2026-09-30) [decisão humana 2026-09-30].
 > - Destino: [ADR-015](../decisions/ADR-015-card-ambiguous-order-reconciliation.md), **aceito** em 2026-09-30.
-> - Implementação concluída (Fases 2–5), ainda não commitada.
+> - Implementação concluída (Fases 2–5), publicada em `6f5acdd` [commit `6f5acdd`].
 > - H1 confirmada ([E2E](#e2e-h1-e-h7-sandbox-2026-09-29)).
 > - H7 real **aprovado** no webhook, com fallback pela tentativa e regra 12 ([H7 no webhook real](#h7-no-webhook-real-2026-09-30-aprovado)).
 > - Continuam pendentes, sem bloquear a conclusão:
 >   - os [cenários E2E adicionais](#o-que-não-foi-executado);
 >   - um [artefato residual de sandbox](#dados-criados-e-pendência) em `unknown`, com a MP Order paga e sem pedido Medusa, **não resolvido**. Ele será resolvido por uma reentrega do webhook ou vira `expired` em 24 h.
 >
-> [Plano de implementação](#plano-de-implementação-adr-015-proposto), revisado pela [revisão de armazenamento do `card_token`](#revisão-armazenamento-do-card_token-2026-09-30) (2026-09-30) · Aberta em: 2026-09-29 · Commit: `77ab03a` (código da Fase 5 não commitado)
+> [Plano de implementação](#plano-de-implementação-adr-015-proposto), revisado pela [revisão de armazenamento do `card_token`](#revisão-armazenamento-do-card_token-2026-09-30) (2026-09-30) · Aberta em: 2026-09-29 · Commit: `6f5acdd`
 
 Marcações próprias deste documento: **[MCP 2026-09-29]** = documentação oficial do Mercado Pago (MLB, pt) consultada pelo MCP `search_documentation` nessa data; **[doc oficial 2026-09-29]** = referência da API lida em `mercadopago.com.br/developers/pt/reference/online-payments/checkout-api/{create-order,search-order}` nessa data. Código do Medusa e do SDK: pacotes instalados (`@medusajs/*` 2.20.1, `mercadopago` 3.6.1), lidos em 2026-09-29.
 

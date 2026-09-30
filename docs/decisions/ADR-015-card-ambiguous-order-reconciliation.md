@@ -1,6 +1,6 @@
 # ADR-015: Reconciliação da Order de cartão com resultado ambíguo
 
-> Status: **aceito** em 2026-09-30 [decisão humana 2026-09-30]. O módulo, a máquina de estados, a criptografia e a integração (provider, rota de update e webhook) estão implementados e testados. O H7 foi executado no webhook real e comprovou o fallback pela tentativa e a regra 12 (`unknown → resolved`) ([evidência](../investigations/INV-009-card-ambiguous-order-reconciliation.md#h7-no-webhook-real-2026-09-30-aprovado)) · Data: 2026-09-29 · Revisado: 2026-09-30 (armazenamento do `card_token`) · Commits: — (implementação ainda não commitada)
+> Status: **aceito** em 2026-09-30 [decisão humana 2026-09-30]. O módulo, a máquina de estados, a criptografia e a integração (provider, rota de update e webhook) estão implementados e testados. O H7 foi executado no webhook real e comprovou o fallback pela tentativa e a regra 12 (`unknown → resolved`) ([evidência](../investigations/INV-009-card-ambiguous-order-reconciliation.md#h7-no-webhook-real-2026-09-30-aprovado)) · Data: 2026-09-29 · Revisado: 2026-09-30 (armazenamento do `card_token`) · Commits: `6f5acdd` [commit `6f5acdd`]
 
 Investigação, evidências e plano de implementação: [INV-009](../investigations/INV-009-card-ambiguous-order-reconciliation.md). Complementa o [ADR-014](ADR-014-card-order-idempotency-key-from-body.md), que continua válido. Altera o invariante 19 (correlação do webhook).
 
