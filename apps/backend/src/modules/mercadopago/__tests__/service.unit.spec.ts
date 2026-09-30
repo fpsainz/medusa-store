@@ -15,24 +15,29 @@ jest.mock("mercadopago", () => {
   }
 })
 
+import { cardInput, createFakeCardAttempts, type FakeCardAttempts } from "../__fixtures__/fake-card-attempts"
 import MercadoPagoPaymentProviderService, {
   PIX_EXPIRATION_TIME,
+  classifyCardOrderError,
   computePixDeadline,
   normalizePixStatus,
   toPixPaymentDto,
 } from "../service"
 
 describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
+  let attempts: FakeCardAttempts
+
   function buildProvider() {
     // Cast to `any`: the abstract base's constructor is `protected` in its
     // `.d.ts`, which trips TS's construct-signature inference for `new` here
     // even though the concrete subclass constructor is public at runtime.
     const ProviderClass = MercadoPagoPaymentProviderService as any
-    return new ProviderClass({}, { access_token: "test-access-token" })
+    return new ProviderClass({ mercadopagoCardAttempt: attempts }, { access_token: "test-access-token" })
   }
 
   beforeEach(() => {
     jest.clearAllMocks()
+    attempts = createFakeCardAttempts()
   })
 
   function mockCreatedOrder(overrides: Partial<Record<string, unknown>> = {}) {
@@ -58,8 +63,8 @@ describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
     mockCreatedOrder()
     const provider = buildProvider()
 
-    const result = await provider.authorizePayment({
-      data: {
+    const result = await provider.authorizePayment(
+      cardInput(attempts, {
         payment_method_id: "visa",
         payment_type_id: "credit_card",
         card_token: "card_token_abc",
@@ -68,8 +73,8 @@ describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
         transaction_amount: 100,
         cart_id: "cart_123",
         payer: { email: "buyer@example.com" },
-      },
-    })
+      })
+    )
 
     expect(orderCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -108,7 +113,7 @@ describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
       mockCreatedOrder()
       const provider = buildProvider()
 
-      await provider.authorizePayment({ data: { ...CARD_DATA, payment_type_id: "debit_card" } })
+      await provider.authorizePayment(cardInput(attempts, { ...CARD_DATA, payment_type_id: "debit_card" }))
 
       const [[createArgs]] = orderCreateMock.mock.calls
       expect(createArgs.body.transactions.payments[0].payment_method).toEqual({
@@ -122,7 +127,7 @@ describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
     it("refuses a card session without payment_type_id (never falls back to credit_card) and creates no Order", async () => {
       const provider = buildProvider()
 
-      await expect(provider.authorizePayment({ data: { ...CARD_DATA } })).rejects.toThrow(
+      await expect(provider.authorizePayment(cardInput(attempts, { ...CARD_DATA }))).rejects.toThrow(
         /missing the card type\. Please re-enter your payment information/
       )
 
@@ -135,7 +140,7 @@ describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
         const provider = buildProvider()
 
         await expect(
-          provider.authorizePayment({ data: { ...CARD_DATA, payment_type_id: paymentTypeId } })
+          provider.authorizePayment(cardInput(attempts, { ...CARD_DATA, payment_type_id: paymentTypeId }))
         ).rejects.toThrow(/unsupported card payment type/)
 
         expect(orderCreateMock).not.toHaveBeenCalled()
@@ -146,7 +151,7 @@ describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
       const provider = buildProvider()
 
       await expect(
-        provider.authorizePayment({ data: { ...CARD_DATA, payment_type_id: null } })
+        provider.authorizePayment(cardInput(attempts, { ...CARD_DATA, payment_type_id: null }))
       ).rejects.toThrow(/missing the card type/)
 
       expect(orderCreateMock).not.toHaveBeenCalled()
@@ -547,7 +552,7 @@ describe("MercadoPagoPaymentProviderService.authorizePayment", () => {
             // paymentType, payment_method_id, payment_method, card_token: all absent
           },
         })
-      ).rejects.toThrow(/card_token and payment_method_id/)
+      ).rejects.toThrow(/card payment data is missing/)
 
       expect(orderCreateMock).not.toHaveBeenCalled()
       expect(orderGetMock).not.toHaveBeenCalled()
@@ -1306,9 +1311,11 @@ describe("toPixPaymentDto", () => {
 // and any new attempt (the E2E of INV-008: 402, then a new card → 409) gets a
 // new one.
 describe("MercadoPagoPaymentProviderService — card Order idempotency key (ADR-014)", () => {
+  let attempts: FakeCardAttempts
+
   function buildProvider() {
     const ProviderClass = MercadoPagoPaymentProviderService as any
-    return new ProviderClass({}, { access_token: "test-access-token" })
+    return new ProviderClass({ mercadopagoCardAttempt: attempts }, { access_token: "test-access-token" })
   }
 
   const CARD_SESSION_DATA = {
@@ -1327,6 +1334,7 @@ describe("MercadoPagoPaymentProviderService — card Order idempotency key (ADR-
       id: "ORD_CARD_1",
       status: "processed",
       status_detail: "accredited",
+      external_reference: "unused",
       transactions: { payments: [{ id: "PAY_CARD_1", status: "processed", status_detail: "accredited" }] },
     })
   }
@@ -1335,25 +1343,35 @@ describe("MercadoPagoPaymentProviderService — card Order idempotency key (ADR-
     return Object.assign(new Error("MercadoPago API error"), { status, errors: [{ code }] })
   }
 
-  async function sentKey(provider: any, data: Record<string, unknown>) {
-    await provider.authorizePayment({ data })
+  const lastCreate = () => {
     const calls = orderCreateMock.mock.calls
-    return calls[calls.length - 1][0].requestOptions.idempotencyKey as string
+    return calls[calls.length - 1][0]
+  }
+
+  async function sentKey(provider: any, data: Record<string, unknown>) {
+    await provider.authorizePayment(cardInput(attempts, data))
+    return lastCreate().requestOptions.idempotencyKey as string
   }
 
   beforeEach(() => {
     jest.clearAllMocks()
+    attempts = createFakeCardAttempts()
     mockApproved()
   })
 
-  it("the same session data (a retried Place order) sends the same key and a deeply equal body", async () => {
+  it("a replay of the same attempt after an ambiguous result sends the same key and a deeply equal body", async () => {
+    orderCreateMock.mockReset()
+    orderCreateMock.mockRejectedValueOnce(mercadoPagoApiError(504, "gateway_timeout"))
+    mockApproved()
     const provider = buildProvider()
+    const input = cardInput(attempts, CARD_SESSION_DATA)
 
-    const first = await sentKey(provider, CARD_SESSION_DATA)
-    const second = await sentKey(provider, { ...CARD_SESSION_DATA })
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    await provider.authorizePayment({ ...input, data: { ...input.data } })
 
-    expect(second).toBe(first)
-    expect(orderCreateMock.mock.calls[1][0].body).toEqual(orderCreateMock.mock.calls[0][0].body)
+    const [first, second] = orderCreateMock.mock.calls.map((call) => call[0])
+    expect(second.requestOptions.idempotencyKey).toBe(first.requestOptions.idempotencyKey)
+    expect(second.body).toEqual(first.body)
   })
 
   it("the key is sha256(<base>:card:<sha256(canonical body)>), within the 128-character limit", async () => {
@@ -1376,7 +1394,7 @@ describe("MercadoPagoPaymentProviderService — card Order idempotency key (ADR-
   it("keeps the base key in session data and never sends it as the Order key", async () => {
     const provider = buildProvider()
 
-    const result = await provider.authorizePayment({ data: CARD_SESSION_DATA })
+    const result = await provider.authorizePayment(cardInput(attempts, CARD_SESSION_DATA))
     const key = orderCreateMock.mock.calls[0][0].requestOptions.idempotencyKey
 
     expect(result.data.mercadopago_idempotency_key).toBe("payses_card_base")
@@ -1404,7 +1422,7 @@ describe("MercadoPagoPaymentProviderService — card Order idempotency key (ADR-
     ["payer", { payer: { email: "other@example.com", identification: { type: "CPF", number: "12345678909" } } }],
     ["card type", { payment_type_id: "debit_card", payment_method_id: "debelo" }],
     ["amount", { amount: "120.00" }],
-  ])("a different %s with the same token is a different body, so a different key", async (_label, change) => {
+  ])("a new attempt with a different %s sends a different key", async (_label, change) => {
     const provider = buildProvider()
 
     const first = await sentKey(provider, CARD_SESSION_DATA)
@@ -1413,16 +1431,24 @@ describe("MercadoPagoPaymentProviderService — card Order idempotency key (ADR-
     expect(second).not.toBe(first)
   })
 
-  it("the key does not depend on the key order of the persisted data (jsonb)", async () => {
+  it("the key does not depend on the key order of the persisted data (jsonb): a replay with reordered data matches", async () => {
+    orderCreateMock.mockReset()
+    orderCreateMock.mockRejectedValueOnce(mercadoPagoApiError(500, "internal_error"))
+    mockApproved()
     const provider = buildProvider()
+    const input = cardInput(attempts, CARD_SESSION_DATA)
 
-    const first = await sentKey(provider, CARD_SESSION_DATA)
-    const second = await sentKey(provider, {
-      ...CARD_SESSION_DATA,
-      payer: { identification: { number: "12345678909", type: "CPF" }, email: "buyer@example.com" },
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    await provider.authorizePayment({
+      ...input,
+      data: {
+        ...input.data,
+        payer: { identification: { number: "12345678909", type: "CPF" }, email: "buyer@example.com" },
+      },
     })
 
-    expect(second).toBe(first)
+    const [first, second] = orderCreateMock.mock.calls.map((call) => call[0])
+    expect(second.requestOptions.idempotencyKey).toBe(first.requestOptions.idempotencyKey)
   })
 
   it("another session (another base key) with the same card data sends a different key", async () => {
@@ -1435,35 +1461,23 @@ describe("MercadoPagoPaymentProviderService — card Order idempotency key (ADR-
   })
 
   it.each([
-    [402, "failed"],
-    [409, "idempotency_key_already_used"],
-  ])("an HTTP %s from the Orders API is propagated and nothing is returned to persist", async (status, code) => {
+    [402, "failed", "failed"],
+    [409, "idempotency_key_already_used", "unknown"],
+  ])("an HTTP %s from the Orders API is propagated, returns nothing to persist and leaves the attempt %s", async (status, code, state) => {
     const error = mercadoPagoApiError(status, code)
     orderCreateMock.mockReset()
     orderCreateMock.mockRejectedValue(error)
     const provider = buildProvider()
-    const data = JSON.parse(JSON.stringify(CARD_SESSION_DATA))
+    const input = cardInput(attempts, CARD_SESSION_DATA)
+    const snapshot = JSON.parse(JSON.stringify(input))
 
-    await expect(provider.authorizePayment({ data })).rejects.toBe(error)
+    await expect(provider.authorizePayment(input)).rejects.toBe(error)
 
     expect(orderCreateMock).toHaveBeenCalledTimes(1)
     // The Payment Module only writes what the provider returns: after a throw
     // the session keeps its data, and the input was not mutated either.
-    expect(data).toEqual(CARD_SESSION_DATA)
-  })
-
-  it("a retry after a failed create sends the same key and body again", async () => {
-    orderCreateMock.mockReset()
-    orderCreateMock.mockRejectedValueOnce(mercadoPagoApiError(500, "internal_error"))
-    mockApproved()
-    const provider = buildProvider()
-
-    await expect(provider.authorizePayment({ data: CARD_SESSION_DATA })).rejects.toThrow()
-    await provider.authorizePayment({ data: CARD_SESSION_DATA })
-
-    const [first, second] = orderCreateMock.mock.calls.map((call) => call[0])
-    expect(second.requestOptions.idempotencyKey).toBe(first.requestOptions.idempotencyKey)
-    expect(second.body).toEqual(first.body)
+    expect(input).toEqual(snapshot)
+    expect(attempts.rows.get(input.data.card_attempt_id)?.state).toBe(state)
   })
 
   it("Pix keeps its previous key: sha256(<base>:pix:<amount>:<generation>), unaffected by the card derivation", async () => {
@@ -1501,5 +1515,375 @@ describe("MercadoPagoPaymentProviderService — card Order idempotency key (ADR-
     expect(orderCreateMock.mock.calls[0][0].requestOptions.idempotencyKey).toBe(
       createHash("sha256").update("payses_card_base:pix:50.00:0").digest("hex")
     )
+  })
+})
+
+// INV-009 / ADR-015 (option B): the card token comes only from the card
+// attempt; the provider owns rules 3, 4 and 5 (begin, replay, resume) and
+// records every Orders API outcome on the attempt.
+describe("MercadoPagoPaymentProviderService — card attempt (INV-009)", () => {
+  let attempts: FakeCardAttempts
+
+  function buildProvider() {
+    const ProviderClass = MercadoPagoPaymentProviderService as any
+    return new ProviderClass({ mercadopagoCardAttempt: attempts }, { access_token: "test-access-token" })
+  }
+
+  const TOKEN = "FAKE_card_token_inv009"
+  const DATA = {
+    payment_method_id: "visa",
+    payment_type_id: "credit_card",
+    card_token: TOKEN,
+    installments: 1,
+    amount: "110.00",
+    cart_id: "cart_inv009",
+    payer: { email: "buyer@example.com" },
+    mercadopago_idempotency_key: "payses_inv009",
+  }
+
+  const approvedOrder = (overrides: Record<string, unknown> = {}) => ({
+    id: "ORD_INV009",
+    status: "processed",
+    status_detail: "accredited",
+    transactions: { payments: [{ id: "PAY_INV009", status: "processed", status_detail: "accredited" }] },
+    ...overrides,
+  })
+
+  const apiError = (status: number, name = "Error") => Object.assign(new Error("MercadoPago API error"), { status, name })
+  const row = (input: { data: { card_attempt_id: string } }) => attempts.rows.get(input.data.card_attempt_id)!
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    orderCreateMock.mockReset()
+    orderGetMock.mockReset()
+    attempts = createFakeCardAttempts()
+  })
+
+  it("submitted: decrypts via the attempt, begins (rule 3) with the body hash, POSTs, resolves; no token in the result", async () => {
+    orderCreateMock.mockResolvedValue(approvedOrder())
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+
+    const result = await provider.authorizePayment(input)
+
+    const { body } = orderCreateMock.mock.calls[0][0]
+    expect(body.transactions.payments[0].payment_method.token).toBe(TOKEN)
+    expect(body.external_reference).toBe(row(input).external_reference)
+    expect(body.description).toBe("Medusa cart cart_inv009")
+    expect(attempts.readCardToken).toHaveBeenCalledWith(input.data.card_attempt_id, "payses_inv009")
+    expect(attempts.beginAuthorization.mock.invocationCallOrder[0]).toBeLessThan(orderCreateMock.mock.invocationCallOrder[0])
+    expect(attempts.beginAuthorization.mock.calls[0][1]).toMatch(/^[0-9a-f]{64}$/)
+    expect(row(input).state).toBe("resolved")
+    expect(row(input).mercadopago_order_id).toBe("ORD_INV009")
+    expect(result.status).toBe("captured")
+    expect(result.data.card_attempt_id).toBe(input.data.card_attempt_id)
+    expect(result.data.mercadopago_external_reference).toBe(row(input).external_reference)
+    expect(JSON.stringify(result)).not.toContain(TOKEN)
+  })
+
+  it("never uses nor carries forward a legacy card_token left in PaymentSession.data", async () => {
+    orderCreateMock.mockResolvedValue(approvedOrder())
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+
+    const result = await provider.authorizePayment({ ...input, data: { ...input.data, card_token: "legacy_token" } })
+
+    expect(orderCreateMock.mock.calls[0][0].body.transactions.payments[0].payment_method.token).toBe(TOKEN)
+    expect(result.data).not.toHaveProperty("card_token")
+  })
+
+  it("refuses a card session without card_attempt_id (legacy or never submitted), before any external call", async () => {
+    const provider = buildProvider()
+    const { card_token: _t, ...legacy } = DATA
+
+    await expect(provider.authorizePayment({ data: { ...legacy, card_token: TOKEN } })).rejects.toThrow(
+      /card payment data is missing/
+    )
+    expect(attempts.retrieveAttemptView).not.toHaveBeenCalled()
+    expect(orderCreateMock).not.toHaveBeenCalled()
+  })
+
+  it("refuses an attempt bound to another payment session (card_attempt_not_found)", async () => {
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+
+    await expect(provider.authorizePayment({ ...input, context: { idempotency_key: "payses_other" } })).rejects.toMatchObject({
+      code: "card_attempt_not_found",
+    })
+    expect(orderCreateMock).not.toHaveBeenCalled()
+  })
+
+  it("ambiguous result (connection error): rule 8 → unknown with the error class, token kept, error rethrown", async () => {
+    const error = apiError(0, "MPConnectionError")
+    orderCreateMock.mockRejectedValue(error)
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+
+    await expect(provider.authorizePayment(input)).rejects.toBe(error)
+    expect(row(input).state).toBe("unknown")
+    expect(row(input).last_error_class).toBe("MPConnectionError")
+    expect(row(input).token).toBe(TOKEN)
+  })
+
+  it("definitive refusal (402): rule 7 → failed; a later Place order never POSTs again", async () => {
+    orderCreateMock.mockRejectedValue(apiError(402, "MPPaymentError"))
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+
+    await expect(provider.authorizePayment(input)).rejects.toThrow("MercadoPago API error")
+    expect(row(input).state).toBe("failed")
+    expect(row(input).token).toBeNull()
+
+    await expect(provider.authorizePayment(input)).rejects.toThrow(/attempt has ended/)
+    expect(orderCreateMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("replay (rule 4): an unknown attempt is resumed and re-sent with the same key and body", async () => {
+    orderCreateMock.mockRejectedValueOnce(apiError(504)).mockResolvedValueOnce(approvedOrder())
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    await provider.authorizePayment(input)
+
+    const [first, second] = orderCreateMock.mock.calls.map((call) => call[0])
+    expect(attempts.resumeAuthorization).toHaveBeenCalledWith(input.data.card_attempt_id)
+    expect(second.requestOptions.idempotencyKey).toBe(first.requestOptions.idempotencyKey)
+    expect(second.body).toEqual(first.body)
+    expect(row(input).state).toBe("resolved")
+  })
+
+  it("resumption (rule 5): a stale authorizing attempt is resumed with the same key", async () => {
+    orderCreateMock.mockRejectedValueOnce(apiError(504)).mockResolvedValueOnce(approvedOrder())
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    Object.assign(row(input), { state: "authorizing", stale: true })
+
+    await provider.authorizePayment(input)
+
+    const [first, second] = orderCreateMock.mock.calls.map((call) => call[0])
+    expect(second.requestOptions.idempotencyKey).toBe(first.requestOptions.idempotencyKey)
+  })
+
+  it("a recent authorizing attempt (concurrent Place order) is refused with card_attempt_in_progress, no POST", async () => {
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    row(input).state = "authorizing"
+
+    await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_in_progress" })
+    expect(orderCreateMock).not.toHaveBeenCalled()
+  })
+
+  it("replay past the deadline → card_attempt_manual_review and expired, no POST", async () => {
+    orderCreateMock.mockRejectedValueOnce(apiError(504))
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    row(input).past_deadline = true
+
+    await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+    expect(row(input).state).toBe("expired")
+    expect(orderCreateMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("an expired attempt → card_attempt_manual_review, no POST", async () => {
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    row(input).state = "expired"
+
+    await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+    expect(orderCreateMock).not.toHaveBeenCalled()
+  })
+
+  it("a submitted attempt whose token is unavailable (deadline) → card_token_unavailable, no POST", async () => {
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    row(input).past_deadline = true
+
+    await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_token_unavailable" })
+    expect(orderCreateMock).not.toHaveBeenCalled()
+  })
+
+  it("an unknown attempt whose token cannot be read (decrypt failure) → manual review, never failed, no POST", async () => {
+    orderCreateMock.mockRejectedValueOnce(apiError(504))
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    row(input).token = null
+
+    await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+    expect(row(input).state).not.toBe("failed")
+    expect(orderCreateMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("a resumed (stale) authorizing attempt whose token cannot be read goes back to unknown → manual review, no POST", async () => {
+    orderCreateMock.mockRejectedValueOnce(apiError(504))
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    Object.assign(row(input), { state: "authorizing", stale: true, token: null })
+
+    await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+    expect(row(input).state).toBe("unknown")
+    expect(orderCreateMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("a replay whose body differs from the recorded one is never sent: unknown + manual review", async () => {
+    orderCreateMock.mockRejectedValueOnce(apiError(504))
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+
+    await expect(provider.authorizePayment({ ...input, data: { ...input.data, installments: 3 } })).rejects.toMatchObject({
+      code: "card_attempt_manual_review",
+    })
+    expect(row(input).state).toBe("unknown")
+    expect(row(input).last_error_class).toBe("body_mismatch")
+    expect(orderCreateMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("rule 12: an unknown attempt with its Order recorded is read (GET, no POST) and resolved when paid", async () => {
+    orderCreateMock.mockRejectedValueOnce(apiError(504))
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    await attempts.recordOrder(input.data.card_attempt_id, "ORD_INV009")
+    orderGetMock.mockResolvedValue(approvedOrder({ external_reference: row(input).external_reference }))
+
+    const result = await provider.authorizePayment(input)
+
+    expect(orderGetMock).toHaveBeenCalledWith({ id: "ORD_INV009" })
+    expect(orderCreateMock).toHaveBeenCalledTimes(1)
+    expect(attempts.resolveUnknown).toHaveBeenCalledWith(input.data.card_attempt_id, "ORD_INV009")
+    expect(row(input).state).toBe("resolved")
+    expect(result.status).toBe("captured")
+  })
+
+  it("rule 9 via GET: an unknown attempt whose recorded Order was declined ends failed", async () => {
+    orderCreateMock.mockRejectedValueOnce(apiError(504))
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    await attempts.recordOrder(input.data.card_attempt_id, "ORD_INV009")
+    orderGetMock.mockResolvedValue(
+      approvedOrder({
+        status: "failed",
+        external_reference: row(input).external_reference,
+        transactions: { payments: [{ id: "PAY_INV009", status: "failed", status_detail: "rejected_by_issuer" }] },
+      })
+    )
+
+    const result = await provider.authorizePayment(input)
+
+    expect(row(input).state).toBe("failed")
+    expect(result.status).toBe("error")
+  })
+
+  it("a recorded Order whose external_reference is not the attempt's is never settled (manual review)", async () => {
+    orderCreateMock.mockRejectedValueOnce(apiError(504))
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    await expect(provider.authorizePayment(input)).rejects.toThrow()
+    await attempts.recordOrder(input.data.card_attempt_id, "ORD_INV009")
+    orderGetMock.mockResolvedValue(approvedOrder({ external_reference: "cart_inv009" }))
+
+    await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+    expect(row(input).state).toBe("unknown")
+  })
+
+  it("a 2xx still pending records the Order and keeps the attempt open", async () => {
+    orderCreateMock.mockResolvedValue(
+      approvedOrder({ status: "processing", transactions: { payments: [{ id: "PAY_INV009", status: "in_process" }] } })
+    )
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+
+    const result = await provider.authorizePayment(input)
+
+    expect(result.status).toBe("pending")
+    expect(row(input).state).toBe("authorizing")
+    expect(row(input).mercadopago_order_id).toBe("ORD_INV009")
+  })
+
+  it("a 2xx with a declined payment ends the attempt failed with the Order recorded", async () => {
+    orderCreateMock.mockResolvedValue(
+      approvedOrder({ status: "failed", transactions: { payments: [{ id: "PAY_INV009", status: "rejected" }] } })
+    )
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+
+    const result = await provider.authorizePayment(input)
+
+    expect(result.status).toBe("error")
+    expect(row(input).state).toBe("failed")
+    expect(row(input).mercadopago_order_id).toBe("ORD_INV009")
+  })
+
+  it("a 2xx without the Order id leaves the attempt unknown (the Order may exist)", async () => {
+    orderCreateMock.mockResolvedValue(approvedOrder({ id: undefined }))
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+
+    await expect(provider.authorizePayment(input)).rejects.toThrow(/order ID was not returned/)
+    expect(row(input).state).toBe("unknown")
+    expect(row(input).last_error_class).toBe("incomplete_order_response")
+  })
+
+  it("accepts a concurrent settlement to the same state (e.g. the webhook path resolved it first)", async () => {
+    const provider = buildProvider()
+    const input = cardInput(attempts, DATA)
+    orderCreateMock.mockImplementation(async () => {
+      Object.assign(row(input), { state: "resolved", mercadopago_order_id: "ORD_INV009", token: null })
+      return approvedOrder()
+    })
+
+    const result = await provider.authorizePayment(input)
+
+    expect(result.status).toBe("captured")
+    expect(row(input).state).toBe("resolved")
+  })
+
+  describe("deletePayment", () => {
+    it("replaces a submitted attempt (rule 2, token destroyed)", async () => {
+      const provider = buildProvider()
+      const input = cardInput(attempts, DATA)
+
+      await provider.deletePayment({ data: input.data })
+
+      expect(row(input).state).toBe("replaced")
+      expect(row(input).token).toBeNull()
+    })
+
+    it.each([
+      ["authorizing", "card_attempt_pending"],
+      ["unknown", "card_attempt_pending"],
+      ["expired", "card_attempt_manual_review"],
+    ])("refuses while the attempt is %s (%s): the session is frozen", async (state, code) => {
+      const provider = buildProvider()
+      const input = cardInput(attempts, DATA)
+      row(input).state = state as any
+
+      await expect(provider.deletePayment({ data: input.data })).rejects.toMatchObject({ code })
+    })
+
+    it("ignores an attempt that no longer exists, and sessions without an attempt", async () => {
+      const provider = buildProvider()
+
+      await expect(provider.deletePayment({ data: { card_attempt_id: "mpca_missing" } })).resolves.toBeDefined()
+      await expect(provider.deletePayment({ data: { payment_method_id: "visa" } })).resolves.toBeDefined()
+    })
+  })
+
+  it("classifyCardOrderError: 400/401/402/403/422 are definitive; everything else is ambiguous", () => {
+    for (const status of [400, 401, 402, 403, 422]) {
+      expect(classifyCardOrderError(apiError(status, "MPPaymentError")).definitive).toBe(true)
+    }
+    for (const status of [0, 409, 423, 429, 500, 502, 503, 504]) {
+      expect(classifyCardOrderError(apiError(status)).definitive).toBe(false)
+    }
+    expect(classifyCardOrderError(new Error("x")).definitive).toBe(false)
+    expect(classifyCardOrderError(apiError(402)).errorClass).toBe("http_402")
+    expect(classifyCardOrderError({ name: "bad name!", status: 500 }).errorClass).toBe("UnknownError")
   })
 })

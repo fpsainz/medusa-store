@@ -3,6 +3,10 @@ import { createHash } from 'node:crypto'
 import { AbstractPaymentProvider, BigNumber, MedusaError } from '@medusajs/framework/utils'
 import { MercadoPagoConfig, Order } from 'mercadopago'
 
+import { CARD_ATTEMPT_ERROR_CODES, cardAttemptError } from '../mercadopago-card-attempt/errors'
+import type MercadopagoCardAttemptModuleService from '../mercadopago-card-attempt/service'
+import type { CardAttemptView } from '../mercadopago-card-attempt/service'
+
 type MercadoPagoProviderOptions = {
   access_token?: string
 }
@@ -17,6 +21,34 @@ export type CardPaymentType = 'credit_card' | 'debit_card'
 
 export function isCardPaymentType(value: unknown): value is CardPaymentType {
   return value === 'credit_card' || value === 'debit_card'
+}
+
+// Container key of the card attempt module (ADR-015), declared in
+// medusa-config.ts as a dependency of the payment module: the only other
+// module this provider can resolve.
+const CARD_ATTEMPT_MODULE = 'mercadopagoCardAttempt'
+
+// HTTP statuses of POST /v1/orders that settle the attempt as failed: the
+// request was refused or processed and declined (INV-009). Anything else
+// (network error, timeout, 409, 423, 429, 5xx, unknown) leaves the external
+// result unknown.
+const DEFINITIVE_CARD_ORDER_STATUSES = new Set([400, 401, 402, 403, 422])
+
+// Classifies an error of the Orders API create call. `errorClass` is the
+// safe label stored on the attempt: the SDK error class name (or http_<status>
+// for a plain error), never a message or body.
+export function classifyCardOrderError(error: unknown): { definitive: boolean; errorClass: string } {
+  const candidate = error as { name?: unknown; status?: unknown } | null
+  const status = typeof candidate?.status === 'number' ? candidate.status : undefined
+  const name =
+    typeof candidate?.name === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(candidate.name)
+      ? candidate.name
+      : 'UnknownError'
+
+  return {
+    definitive: status !== undefined && DEFINITIVE_CARD_ORDER_STATUSES.has(status),
+    errorClass: name === 'Error' && status ? `http_${status}` : name,
+  }
 }
 
 // Presentation status of a Mercado Pago Pix charge, derived from the Orders
@@ -609,11 +641,106 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
   // same body from the persisted session data and gets the same key, while a
   // new attempt (new card token, installments, payer...) gets a new one.
   private getCardOrderIdempotencyKey(baseKey: string, body: Record<string, unknown>): string {
-    const bodyHash = createHash('sha256').update(canonicalJson(body)).digest('hex')
-
     return createHash('sha256')
-      .update(`${baseKey}:card:${bodyHash}`)
+      .update(`${baseKey}:card:${this.getCardOrderBodySha256(body)}`)
       .digest('hex')
+  }
+
+  // SHA-256 of the canonical card Order body: part of the idempotency key
+  // above and the attempt's body_sha256 (INV-009), computed only here.
+  private getCardOrderBodySha256(body: Record<string, unknown>): string {
+    return createHash('sha256').update(canonicalJson(body)).digest('hex')
+  }
+
+  // The card Order body, built only here (INV-009, option B). The token comes
+  // from the card attempt, never from PaymentSession.data, and the
+  // external_reference is the attempt's `<cart_id>-<attempt ULID>` (ADR-015).
+  private buildCardOrderBody(input: {
+    externalReference: string
+    cartId: string
+    amount: number
+    payer: Record<string, unknown>
+    paymentMethodId: string
+    cardToken: string
+    paymentTypeId: CardPaymentType
+    installments: number
+  }): Record<string, unknown> {
+    return {
+      type: 'online',
+      external_reference: input.externalReference,
+      total_amount: input.amount.toFixed(2),
+      currency: 'BRL',
+      processing_mode: 'automatic',
+      description: `Medusa cart ${input.cartId}`,
+      payer: input.payer,
+      transactions: {
+        payments: [
+          {
+            amount: input.amount.toFixed(2),
+            payment_method: {
+              id: input.paymentMethodId,
+              token: input.cardToken,
+              type: input.paymentTypeId,
+              installments: input.installments,
+            },
+          },
+        ],
+      },
+    }
+  }
+
+  private getCardAttempts(): MercadopagoCardAttemptModuleService {
+    let attempts: unknown
+    try {
+      attempts = this.container[CARD_ATTEMPT_MODULE]
+    } catch {
+      attempts = undefined
+    }
+
+    if (!attempts) {
+      throw new MedusaError(
+        MedusaError.Types.UNEXPECTED_STATE,
+        'Mercado Pago: the card attempt module is not available to the provider.'
+      )
+    }
+
+    return attempts as MercadopagoCardAttemptModuleService
+  }
+
+  // Records an attempt outcome without ever masking the error being
+  // handled: a failed recording is logged (ids and classes only).
+  private async recordCardAttemptOutcome(attemptId: string, record: () => Promise<unknown>): Promise<void> {
+    try {
+      await record()
+    } catch (error) {
+      const logger = this.container.logger as { error?: (message: string) => void } | undefined
+      logger?.error?.(
+        `Mercado Pago: could not record the outcome of card attempt ${attemptId} (${(error as { code?: string })?.code ?? 'error'})`
+      )
+    }
+  }
+
+  // Applies a transition whose outcome another request may have applied
+  // first (e.g. the webhook path and Place order settling the same Order):
+  // a conflict is accepted when the attempt already is in the target state.
+  private async settleAttemptTransition(
+    attempts: MercadopagoCardAttemptModuleService,
+    attemptId: string,
+    target: CardAttemptView['state'],
+    transition: () => Promise<unknown>
+  ): Promise<void> {
+    try {
+      await transition()
+    } catch (error) {
+      if ((error as { code?: string })?.code !== CARD_ATTEMPT_ERROR_CODES.conflict) {
+        throw error
+      }
+
+      const current = await attempts.retrieveAttemptView(attemptId)
+      if (current.state !== target) {
+        throw error
+      }
+    }
   }
 
   // Idempotency key for creating a Pix Order. Derived from (never replacing)
@@ -1032,6 +1159,13 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
   async deletePayment(input: any): Promise<any> {
     const data = this.getDataObject(input)
 
+    // A card attempt (ADR-015): a submitted one is discarded (its token
+    // destroyed); an attempt whose authorization is in progress or unknown
+    // freezes the session, so it cannot be deleted (INV-009, rule 2 / freeze).
+    if (typeof data.card_attempt_id === 'string' && data.card_attempt_id) {
+      await this.discardCardAttempt(data.card_attempt_id)
+    }
+
     if (!hasPixOrderData(data)) {
       return { data }
     }
@@ -1042,25 +1176,30 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
   }
 
   async authorizePayment(input: any): Promise<any> {
-    const data = this.getDataObject(input)
+    const rawData = this.getDataObject(input)
 
-    if (this.isPixSession(data)) {
-      return this.authorizePix(data, input)
+    if (this.isPixSession(rawData)) {
+      return this.authorizePix(rawData, input)
     }
+
+    // A card_token left in the data by an older session is never used nor
+    // carried forward: the token lives only in the card attempt (ADR-015).
+    const { card_token: _legacyCardToken, ...data } = rawData
 
     const paymentMethodId =
       typeof data.payment_method_id === 'string' ? data.payment_method_id : undefined
-    const cardToken = typeof data.card_token === 'string' ? data.card_token : undefined
+    const attemptId =
+      typeof data.card_attempt_id === 'string' && data.card_attempt_id ? data.card_attempt_id : undefined
     const installments = Number(data.installments ?? 1)
     const amount = this.getAmount(data.amount ?? data.transaction_amount ?? input?.amount, 'transaction amount')
     const cartId = typeof data.cart_id === 'string' && data.cart_id ? data.cart_id : undefined
-    const payer = data.payer && typeof data.payer === 'object' ? data.payer : undefined
+    const payer = data.payer && typeof data.payer === 'object' ? (data.payer as Record<string, unknown>) : undefined
     const idempotencyKey = this.getIdempotencyKey({ ...data, amount }, input?.context)
 
-    if (!cardToken || !paymentMethodId) {
+    if (!attemptId || !paymentMethodId) {
       throw new MedusaError(
         MedusaError.Types.INVALID_DATA,
-        'Mercado Pago: tokenized payment data is missing. card_token and payment_method_id must be provided by the storefront/tokenization step before creating the Order.'
+        'Mercado Pago: the card payment data is missing. Please re-enter your payment information.'
       )
     }
 
@@ -1104,67 +1243,248 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
       )
     }
 
-    const body = {
-      type: 'online',
-      external_reference: cartId,
-      total_amount: amount.toFixed(2),
-      currency: 'BRL',
-      processing_mode: 'automatic',
-      description: `Medusa cart ${cartId}`,
-      payer,
-      transactions: {
-        payments: [
-          {
-            amount: amount.toFixed(2),
-            payment_method: {
-              id: paymentMethodId,
-              token: cardToken,
-              type: paymentTypeId,
-              installments,
-            },
-          },
-        ],
-      },
+    // The Payment Module passes the session id as context.idempotency_key;
+    // the attempt's token is bound to it (AAD).
+    const paymentSessionId =
+      typeof input?.context?.idempotency_key === 'string' && input.context.idempotency_key
+        ? input.context.idempotency_key
+        : idempotencyKey
+
+    const attempts = this.getCardAttempts()
+    let attempt = await attempts.retrieveAttemptView(attemptId)
+
+    if (attempt.payment_session_id !== paymentSessionId) {
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.notFound)
     }
 
-    const order = await this.orderClient.create({
-      body,
-      requestOptions: {
-        idempotencyKey: this.getCardOrderIdempotencyKey(idempotencyKey, body),
-      },
-    })
+    // An Order is already known for this attempt (a lost response later
+    // associated by the webhook, or a previous authorization whose Medusa
+    // write failed): read it, never create another one.
+    if (attempt.mercadopago_order_id) {
+      return this.settleKnownCardOrder(attempts, attempt, data, idempotencyKey)
+    }
 
+    const buildBody = (cardToken: string) =>
+      this.buildCardOrderBody({
+        externalReference: attempt.external_reference,
+        cartId,
+        amount,
+        payer,
+        paymentMethodId,
+        cardToken,
+        paymentTypeId,
+        installments,
+      })
+
+    let body: Record<string, unknown>
+
+    switch (attempt.state) {
+      case 'submitted': {
+        // Rule 3 (provider, option B): persisted in the attempt module's own
+        // transaction before the POST, so it survives any workflow failure.
+        body = buildBody(await attempts.readCardToken(attempt.id, paymentSessionId))
+        attempt = await attempts.beginAuthorization(attempt.id, this.getCardOrderBodySha256(body))
+        break
+      }
+      case 'unknown': {
+        // Rule 4: replay of the same attempt (same body, same key). The token
+        // is read while the attempt is still unknown, so a token that cannot
+        // be obtained is card_attempt_manual_review and the state stays
+        // unknown (the Order may exist; never failed).
+        const cardToken = await attempts.readCardToken(attempt.id, paymentSessionId)
+        attempt = await attempts.resumeAuthorization(attempt.id)
+        body = buildBody(cardToken)
+        await this.assertReplayBody(attempts, attempt, body)
+        break
+      }
+      case 'authorizing': {
+        // Rule 5: resumption of an interrupted authorization. A recent one is
+        // refused with card_attempt_in_progress; past the deadline, with
+        // card_attempt_manual_review. Once resumed, a token that cannot be
+        // obtained sends it back to unknown (rule 8): its POST may have gone.
+        attempt = await attempts.resumeAuthorization(attempt.id)
+        let cardToken: string
+        try {
+          cardToken = await attempts.readCardToken(attempt.id, paymentSessionId)
+        } catch (error) {
+          if ((error as { code?: string })?.code === CARD_ATTEMPT_ERROR_CODES.tokenUnavailable) {
+            await this.recordCardAttemptOutcome(attempt.id, () =>
+              attempts.markUnknown(attempt.id, CARD_ATTEMPT_ERROR_CODES.tokenUnavailable)
+            )
+            throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+          }
+          throw error
+        }
+        body = buildBody(cardToken)
+        await this.assertReplayBody(attempts, attempt, body)
+        break
+      }
+      case 'expired':
+        throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+      default:
+        // failed or replaced: the attempt has ended and its token is gone.
+        // A plain error keeps the usual declined-card response: the core
+        // turns a non-Medusa error into 200 PAYMENT_AUTHORIZATION_ERROR,
+        // while a MedusaError would be rethrown as a 400.
+        // eslint-disable-next-line @medusajs/use-medusa-error-not-generic-error
+        throw new Error('Mercado Pago: the card payment attempt has ended; the card must be submitted again.')
+    }
+
+    let order: Awaited<ReturnType<Order['create']>>
+    try {
+      order = await this.orderClient.create({
+        body,
+        requestOptions: {
+          idempotencyKey: this.getCardOrderIdempotencyKey(idempotencyKey, body),
+        },
+      })
+    } catch (error) {
+      // Rules 7 and 8: a definitive refusal ends the attempt; anything else
+      // leaves the external result unknown and keeps the token for a replay.
+      const { definitive, errorClass } = classifyCardOrderError(error)
+      await this.recordCardAttemptOutcome(attempt.id, () =>
+        definitive ? attempts.failAuthorization(attempt.id, errorClass) : attempts.markUnknown(attempt.id, errorClass)
+      )
+      throw error
+    }
+
+    if (!order.id || !order.transactions?.payments?.[0]) {
+      // A 2xx without the Order id or payment: the Order may exist.
+      await this.recordCardAttemptOutcome(attempt.id, () => attempts.markUnknown(attempt.id, 'incomplete_order_response'))
+      throw new MedusaError(
+        MedusaError.Types.UNEXPECTED_STATE,
+        !order.id
+          ? 'Mercado Pago: order ID was not returned by the API.'
+          : 'Mercado Pago: payment was not returned in the order response.'
+      )
+    }
+
+    return this.settleCardOrder(attempts, attempt, order, data, idempotencyKey)
+  }
+
+  // A replay must send exactly the body recorded when the authorization
+  // began (rule 3). Anything else is not the operation that may already
+  // exist at Mercado Pago: it is never sent under this attempt.
+  private async assertReplayBody(
+    attempts: MercadopagoCardAttemptModuleService,
+    attempt: CardAttemptView,
+    body: Record<string, unknown>
+  ): Promise<void> {
+    if (this.getCardOrderBodySha256(body) === attempt.body_sha256) {
+      return
+    }
+
+    await this.recordCardAttemptOutcome(attempt.id, () => attempts.markUnknown(attempt.id, 'body_mismatch'))
+    throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+  }
+
+  // Settles the attempt from an Order of the Orders API (POST response or
+  // GET) and returns the provider result:
+  // - paid → resolved (rule 6 from authorizing, rule 12 from unknown);
+  // - declined/canceled → failed (rule 7 / rule 9), the Order recorded;
+  // - still pending → the Order is recorded and the attempt stays open.
+  private async settleCardOrder(
+    attempts: MercadopagoCardAttemptModuleService,
+    attempt: CardAttemptView,
+    order: Awaited<ReturnType<Order['get']>>,
+    data: PaymentData,
+    idempotencyKey: string
+  ): Promise<any> {
+    const orderId = order.id as string
     const payment = order.transactions?.payments?.[0]
+    const status = this.getStatusFromGateway(payment?.status, order.status)
+    const open = attempt.state === 'authorizing' || attempt.state === 'unknown'
 
-    if (!order.id) {
-      throw new MedusaError(
-        MedusaError.Types.UNEXPECTED_STATE,
-        'Mercado Pago: order ID was not returned by the API.'
-      )
+    if (open && !attempt.mercadopago_order_id) {
+      await attempts.recordOrder(attempt.id, orderId)
     }
 
-    if (!payment) {
-      throw new MedusaError(
-        MedusaError.Types.UNEXPECTED_STATE,
-        'Mercado Pago: payment was not returned in the order response.'
+    if (open && (status === 'captured' || status === 'authorized')) {
+      await this.settleAttemptTransition(attempts, attempt.id, 'resolved', () =>
+        attempt.state === 'authorizing'
+          ? attempts.resolveAuthorization(attempt.id, orderId)
+          : attempts.resolveUnknown(attempt.id, orderId)
+      )
+    } else if (open && (status === 'error' || status === 'canceled')) {
+      await this.settleAttemptTransition(attempts, attempt.id, 'failed', () =>
+        attempt.state === 'authorizing'
+          ? attempts.failAuthorization(attempt.id, 'order_not_approved')
+          : attempts.failUnknown(attempt.id, orderId)
       )
     }
-
-    const status = this.getStatusFromGateway(payment.status, order.status)
 
     return {
       status,
       data: {
         ...data,
-        mercadopago_order_id: order.id,
-        mercadopago_payment_id: payment.id,
-        mercadopago_payment_status: payment.status,
-        mercadopago_status_detail: payment.status_detail,
+        mercadopago_order_id: orderId,
+        mercadopago_payment_id: payment?.id,
+        mercadopago_payment_status: payment?.status,
+        mercadopago_status_detail: payment?.status_detail,
         mercadopago_order_status: order.status,
         mercadopago_order_status_detail: order.status_detail,
-        mercadopago_external_reference: cartId,
+        mercadopago_external_reference: attempt.external_reference,
         mercadopago_idempotency_key: idempotencyKey,
       },
+    }
+  }
+
+  // The attempt already has its Order: read it (GET), never create one.
+  private async settleKnownCardOrder(
+    attempts: MercadopagoCardAttemptModuleService,
+    attempt: CardAttemptView,
+    data: PaymentData,
+    idempotencyKey: string
+  ): Promise<any> {
+    if (attempt.state === 'expired') {
+      // Past the deadline only an operator settles the attempt (rule 11).
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+    }
+
+    const order = await this.orderClient.get({ id: attempt.mercadopago_order_id as string })
+
+    if (order.external_reference !== attempt.external_reference || !order.transactions?.payments?.[0]) {
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+    }
+
+    return this.settleCardOrder(attempts, attempt, order, data, idempotencyKey)
+  }
+
+  // Session deletion (INV-009): a submitted attempt is replaced (token
+  // destroyed); an attempt in authorization, unknown or expired refuses the
+  // deletion (the session is frozen); a final attempt needs nothing.
+  private async discardCardAttempt(attemptId: string): Promise<void> {
+    const attempts = this.getCardAttempts()
+    let attempt: CardAttemptView
+
+    try {
+      attempt = await attempts.retrieveAttemptView(attemptId)
+    } catch (error) {
+      if ((error as { code?: string })?.code === CARD_ATTEMPT_ERROR_CODES.notFound) {
+        return
+      }
+      throw error
+    }
+
+    if (attempt.state === 'submitted') {
+      try {
+        await attempts.replaceSubmitted(attempt.id)
+        return
+      } catch (error) {
+        if ((error as { code?: string })?.code !== CARD_ATTEMPT_ERROR_CODES.conflict) {
+          throw error
+        }
+        // Another request moved it first: decide on its current state.
+        attempt = await attempts.retrieveAttemptView(attemptId)
+      }
+    }
+
+    if (attempt.state === 'authorizing' || attempt.state === 'unknown') {
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.pending)
+    }
+
+    if (attempt.state === 'expired') {
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
     }
   }
 

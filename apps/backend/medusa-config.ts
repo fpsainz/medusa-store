@@ -26,6 +26,9 @@ module.exports = defineConfig({
   modules: [
     {
       resolve: '@medusajs/medusa/payment',
+      // The Mercado Pago provider reads its card attempts (ADR-015). Declared
+      // module dependencies are the only other modules a provider can resolve.
+      dependencies: ['mercadopagoCardAttempt'],
       options: {
         providers: [
           {
@@ -45,6 +48,18 @@ module.exports = defineConfig({
       // Temporary payment capabilities (ADR-007). Its table comes from
       // src/modules/payment-access/migrations.
       resolve: './src/modules/payment-access',
+    },
+    {
+      // Mercado Pago card authorization attempts (ADR-015). Its table comes
+      // from src/modules/mercadopago-card-attempt/migrations.
+      resolve: './src/modules/mercadopago-card-attempt',
+      options: {
+        // `kid:key,kid:key` (32-byte keys, base64url) and the key id used to
+        // encrypt. Absent: the app starts and card attempts are refused.
+        // Malformed: the boot fails.
+        card_token_keys: process.env.MERCADOPAGO_CARD_TOKEN_KEYS,
+        card_token_current_kid: process.env.MERCADOPAGO_CARD_TOKEN_CURRENT_KID,
+      },
     },
   ],
 })

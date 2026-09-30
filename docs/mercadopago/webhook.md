@@ -15,12 +15,22 @@ URL: `POST /hooks/payment/mercadopago`. Em desenvolvimento, ver [../runbooks/dev
 5. `WebhookSignatureValidator.validate` do SDK, com `dataId` em minúsculas → inválida: **401**; outro erro: **500**.
 6. `MERCADOPAGO_ACCESS_TOKEN` ausente → **500**.
 7. `GET /v1/orders/{data.id}` (valor original) → falha: **502**.
-8. Order sem `external_reference` → **200**, sem processar.
+8. Order sem `external_reference` → **200**, sem processar. O cart vem do `external_reference`: o valor inteiro (Pix e cartão antes do ADR-015) ou a parte antes do `-` no formato `<cart_id>-<ULID>` da tentativa de cartão ([ADR-015](../decisions/ADR-015-card-ambiguous-order-reconciliation.md)). Qualquer outro formato é tratado como um `cart_id` comum.
 9. Busca sessions do `payment_collection` do cart com `provider_id = pp_mercadopago` e `data.mercadopago_order_id === data.id`:
    - erro na consulta → **503**
    - mais de uma → **503** + `logger.error`
+   - uma → segue para o passo 10 (**o módulo de tentativas não é consultado**)
+   - nenhuma, com `external_reference` de tentativa → **fallback** abaixo
    - nenhuma e a Order está paga (`processed`/`approved`/`authorized` na Order ou no payment) → **503** + `logger.warn`, para o Mercado Pago tentar de novo
    - nenhuma e não paga → **200** + `logger.info`
+
+   **Fallback por tentativa (INV-009):** busca em `mercadopago_card_attempt` a tentativa com esse `external_reference` exato (índice único; só `id`, `state`, session, cart e Order).
+   - Nenhuma → como "nenhuma" acima. Mais de uma → **503** + `logger.error`. Erro no módulo → **503**.
+   - A tentativa só é associada se: pertence ao mesmo cart, sua session é uma session `pp_mercadopago` desse cart que ainda aponta para ela (`data.card_attempt_id`), está `authorizing`/`unknown`, nem ela nem a session guardam outra Order, e o valor da Order é igual ao da session. Senão: Order paga → **503** + `logger.error` (conciliação manual); não paga → **200** + `logger.warn`.
+   - Associada: grava `mercadopago_order_id` na tentativa (se ainda não gravado).
+     - Order recusada/cancelada numa tentativa `unknown` → `unknown → failed` (regra 9) → **200**. Numa tentativa `authorizing`, a chamada do provider em andamento decide.
+     - Order pendente → **200**.
+     - Order paga → passo 10 com a session da tentativa. O `processPaymentWorkflow` chama o provider, que lê a Order já conhecida (`GET`, sem `POST`) e aplica `unknown → resolved` (regra 12) ou `authorizing → resolved` (regra 6).
 10. Emite `payment.webhook_received` com `provider: "mercadopago"` e payload enriquecido: `dataId`, `sessionId`, `orderStatus`, `orderStatusDetail`, `paymentStatus`, `paymentStatusDetail`, `amount` (`paid_amount` ou `amount` do payment, só se for decimal válido ≥ 0). Opções do emit: `delay = webhook_delay || 5000`, `attempts = webhook_retries || 3`, lidas das opções do módulo de pagamento (não configuradas em `medusa-config.ts`, então valem os padrões). Erro no emit → **400**. Sucesso → **200**.
 
 ## Processamento no provider

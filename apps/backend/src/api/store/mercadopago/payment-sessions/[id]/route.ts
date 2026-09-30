@@ -2,6 +2,9 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, MedusaError, Modules } from "@medusajs/framework/utils"
 
 import { isCardPaymentType } from "../../../../../modules/mercadopago/service"
+import { BLOCKING_CARD_ATTEMPT_STATES } from "../../../../../modules/mercadopago-card-attempt/attempt-states"
+import { CARD_ATTEMPT_ERROR_CODES, cardAttemptError } from "../../../../../modules/mercadopago-card-attempt/errors"
+import type MercadopagoCardAttemptModuleService from "../../../../../modules/mercadopago-card-attempt/service"
 import { revokePaymentSessionAccessWorkflow } from "../../../../../workflows/payment-access/revoke-payment-session-access"
 
 // Same identity as apps/backend/src/api/hooks/payment/[provider]/route.ts (see
@@ -10,6 +13,11 @@ import { revokePaymentSessionAccessWorkflow } from "../../../../../workflows/pay
 // pp_mercadopago. Duplicated here (not imported) to keep the two routes
 // independently readable and because the webhook route does not export it.
 const MERCADOPAGO_PROVIDER_ID = "pp_mercadopago"
+
+// Card attempts of the session (ADR-015, INV-009). The card token received
+// here goes only to this module, encrypted; PaymentSession.data keeps only
+// card_attempt_id.
+const CARD_ATTEMPT_MODULE = "mercadopagoCardAttempt"
 
 type Identification = {
   type?: unknown
@@ -75,6 +83,8 @@ function sanitizePayer(payer: unknown): SanitizedPayer | undefined {
 function buildAllowedSessionData(body: Record<string, unknown>): Record<string, unknown> {
   const allowed: Record<string, unknown> = {}
 
+  // Extracted for the card attempt (ADR-015) and never persisted in the
+  // session data.
   if (typeof body.card_token === "string") {
     allowed.card_token = body.card_token
   }
@@ -169,6 +179,22 @@ function withPayerName(data: Record<string, unknown>, billingName: BillingName):
   }
 }
 
+async function releaseSubmittedCardAttempt(
+  attempts: MercadopagoCardAttemptModuleService,
+  attemptId: string
+): Promise<void> {
+  try {
+    await attempts.replaceSubmitted(attemptId)
+  } catch (error) {
+    const code = (error as { code?: string })?.code
+    // Not found or no longer submitted (already final): nothing to release.
+    // A blocking attempt was refused above.
+    if (code !== CARD_ATTEMPT_ERROR_CODES.notFound && code !== CARD_ATTEMPT_ERROR_CODES.conflict) {
+      throw error
+    }
+  }
+}
+
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const paymentModuleService = req.scope.resolve(Modules.PAYMENT)
   const paymentSessionId = req.params.id
@@ -221,21 +247,61 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     )
   }
 
-  const allowedData = buildAllowedSessionData(body)
+  const { card_token: cardToken, ...allowedData } = buildAllowedSessionData(body)
+  const attempts = req.scope.resolve<MercadopagoCardAttemptModuleService>(CARD_ATTEMPT_MODULE)
 
-  // A new card submission carries its own card type; a type left over from an
-  // earlier card must never be reused for it (the provider then refuses to
-  // authorize instead of charging with a stale type).
+  // While a card authorization is in progress, unknown or expired, the
+  // session is frozen (INV-009): no new card, no change of method or data.
+  const [blocking] = (await attempts.listMercadopagoCardAttempts(
+    { payment_session_id: paymentSessionId, state: [...BLOCKING_CARD_ATTEMPT_STATES] },
+    { select: ["id", "state"], take: 1 }
+  )) as { id: string; state: string }[]
+
+  if (blocking) {
+    throw cardAttemptError(
+      blocking.state === "expired" ? CARD_ATTEMPT_ERROR_CODES.manualReview : CARD_ATTEMPT_ERROR_CODES.pending
+    )
+  }
+
+  // A card_token persisted by an older version of this route never stays in
+  // the session data.
   const previousData: Record<string, unknown> = { ...(paymentSession.data ?? {}) }
-  if (typeof allowedData.card_token === "string" && !("payment_type_id" in allowedData)) {
-    delete previousData.payment_type_id
+  delete previousData.card_token
+
+  const becomesPix = (allowedData.payment_method_id ?? previousData.payment_method_id) === "pix"
+
+  if (typeof cardToken === "string" && !becomesPix) {
+    // A new card submission carries its own card type; a type left over from
+    // an earlier card must never be reused for it (the provider then refuses
+    // to authorize instead of charging with a stale type).
+    if (!("payment_type_id" in allowedData)) {
+      delete previousData.payment_type_id
+    }
+
+    // Rules 2 + 1: replaces a submitted attempt of the session and creates
+    // the new one, the token encrypted in the attempt module only.
+    const attempt = await attempts.submitAttempt({
+      payment_session_id: paymentSessionId,
+      cart_id: cartId,
+      card_token: cardToken,
+    })
+    allowedData.card_attempt_id = attempt.id
+  }
+
+  const nextData = withPayerName({ ...previousData, ...allowedData }, getBillingName(cart?.billing_address))
+
+  if (becomesPix && typeof nextData.card_attempt_id === "string") {
+    // Switching to Pix releases the submitted card attempt (rule 2, token
+    // destroyed). An attempt already final needs nothing.
+    await releaseSubmittedCardAttempt(attempts, nextData.card_attempt_id)
+    delete nextData.card_attempt_id
   }
 
   const updatedPaymentSession = await paymentModuleService.updatePaymentSession({
     id: paymentSessionId,
     currency_code: paymentSession.currency_code,
     amount: paymentSession.amount,
-    data: withPayerName({ ...previousData, ...allowedData }, getBillingName(cart?.billing_address)),
+    data: nextData,
   })
 
   // Leaving Pix revokes the session's Pix payment capabilities (ADR-007). The

@@ -108,6 +108,11 @@ describe("mercadopago webhook route override", () => {
           if (key === ContainerRegistrationKeys.LOGGER) {
             return scopeState.logger
           }
+          // Card attempts (INV-009): only when a test provides the module;
+          // otherwise any access fails, proving it was not consulted.
+          if (key === "mercadopagoCardAttempt" && (scopeState as Record<string, unknown>).cardAttempts) {
+            return (scopeState as Record<string, unknown>).cardAttempts
+          }
           throw new Error(`Unexpected container key: ${key}`)
         },
       },
@@ -512,7 +517,7 @@ describe("mercadopago webhook route override", () => {
 
       expect(listPaymentSessions).toHaveBeenCalledWith(
         { payment_collection_id: "paycol_123", provider_id: "pp_mercadopago" },
-        { select: ["id", "provider_id", "status", "data"] }
+        { select: ["id", "provider_id", "status", "amount", "data"] }
       )
       expect(emit).toHaveBeenCalledTimes(1)
       expect((emit.mock.calls[0] as any)[0].data.payload.sessionId).toBe("payses_current")
@@ -622,6 +627,246 @@ describe("mercadopago webhook route override", () => {
         action: "captured",
         data: { session_id: "payses_current", amount: "130.00" },
       })
+    })
+  })
+  // INV-009 / ADR-015: fallback by the card attempt's external_reference,
+  // only when no session holds the notified Order.
+  describe("card attempt fallback (INV-009)", () => {
+    const ORDER = "ORDTST_ATTEMPT_1"
+    const ULID = "01M3R4ZZP9XSQ9WRFGGXQ4QDQ3"
+    const REF = `cart_123-${ULID}`
+    const ATTEMPT_ID = `mpca_${ULID}`
+
+    const attemptRow = (overrides: Record<string, unknown> = {}) => ({
+      id: ATTEMPT_ID,
+      state: "unknown",
+      payment_session_id: "payses_card",
+      cart_id: "cart_123",
+      mercadopago_order_id: null,
+      ...overrides,
+    })
+
+    const cardSession = (overrides: Record<string, unknown> = {}) => ({
+      id: "payses_card",
+      provider_id: "pp_mercadopago",
+      status: "pending",
+      amount: 130,
+      data: { payment_method_id: "visa", card_attempt_id: ATTEMPT_ID },
+      ...overrides,
+    })
+
+    function buildCardAttempts(rows: unknown[] = [attemptRow()]) {
+      return {
+        listMercadopagoCardAttempts: jest.fn(async () => rows),
+        recordOrder: jest.fn(async () => true),
+        failUnknown: jest.fn(async () => ({})),
+      }
+    }
+
+    function setup(options: {
+      order?: Record<string, unknown>
+      sessions?: unknown[]
+      cardAttempts?: ReturnType<typeof buildCardAttempts> | Record<string, jest.Mock>
+    } = {}) {
+      mockValidSignature()
+      mockValidOrder({ id: ORDER, external_reference: REF, total_amount: "130.00", ...options.order })
+      const cardAttempts = options.cardAttempts ?? buildCardAttempts()
+      const built = buildReq({ query: { "data.id": ORDER }, scopeState: { cardAttempts } })
+      built.listPaymentSessions.mockResolvedValue(options.sessions ?? [cardSession()])
+      return { ...built, cardAttempts, res: buildRes() }
+    }
+
+    it("keeps the current correlation: a session holding the Order wins; the attempt module is never consulted", async () => {
+      mockValidSignature()
+      mockValidOrder({ id: ORDER, external_reference: REF })
+      const { req, emit, listPaymentSessions } = buildReq({ query: { "data.id": ORDER } })
+      listPaymentSessions.mockResolvedValue([cardSession({ data: { mercadopago_order_id: ORDER } })])
+      const res = buildRes()
+
+      await POST(req, res)
+
+      expect((emit.mock.calls[0] as any)[0].data.payload.sessionId).toBe("payses_card")
+      expect(res.sendStatus).toHaveBeenCalledWith(200)
+    })
+
+    it("uses the cart part of <cart_id>-<ULID> for the current correlation", async () => {
+      const { req, graph, res } = setup()
+
+      await POST(req, res)
+
+      expect((graph.mock.calls[0] as any)[0].filters).toEqual({ id: "cart_123" })
+    })
+
+    it("paid Order of an unknown attempt: records the Order and emits for the attempt's session (rule 12 then runs in the provider)", async () => {
+      const { req, emit, cardAttempts, res } = setup()
+
+      await POST(req, res)
+
+      expect(cardAttempts.listMercadopagoCardAttempts).toHaveBeenCalledWith(
+        { external_reference: REF },
+        { select: ["id", "state", "payment_session_id", "cart_id", "mercadopago_order_id"], take: 2 }
+      )
+      expect(cardAttempts.recordOrder).toHaveBeenCalledWith(ATTEMPT_ID, ORDER)
+      expect(cardAttempts.failUnknown).not.toHaveBeenCalled()
+      expect(emit).toHaveBeenCalledTimes(1)
+      const payload = (emit.mock.calls[0] as any)[0].data.payload
+      expect(payload.sessionId).toBe("payses_card")
+      expect(payload.dataId).toBe(ORDER)
+      expect(res.sendStatus).toHaveBeenCalledWith(200)
+    })
+
+    it("paid Order of an attempt still authorizing: records and emits (the provider settles it)", async () => {
+      const { req, emit, cardAttempts, res } = setup({ cardAttempts: buildCardAttempts([attemptRow({ state: "authorizing" })]) })
+
+      await POST(req, res)
+
+      expect(cardAttempts.recordOrder).toHaveBeenCalledWith(ATTEMPT_ID, ORDER)
+      expect(emit).toHaveBeenCalledTimes(1)
+    })
+
+    it("does not record again when the attempt already holds this Order", async () => {
+      const { req, emit, cardAttempts, res } = setup({
+        cardAttempts: buildCardAttempts([attemptRow({ mercadopago_order_id: ORDER })]),
+      })
+
+      await POST(req, res)
+
+      expect(cardAttempts.recordOrder).not.toHaveBeenCalled()
+      expect(emit).toHaveBeenCalledTimes(1)
+    })
+
+    it("declined Order of an unknown attempt: records it and ends the attempt failed (rule 9), 200, no event", async () => {
+      const { req, emit, cardAttempts, res } = setup({
+        order: { status: "failed", transactions: { payments: [{ status: "rejected", amount: "130.00" }] } },
+      })
+
+      await POST(req, res)
+
+      expect(cardAttempts.recordOrder).toHaveBeenCalledWith(ATTEMPT_ID, ORDER)
+      expect(cardAttempts.failUnknown).toHaveBeenCalledWith(ATTEMPT_ID, ORDER)
+      expect(emit).not.toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(200)
+    })
+
+    it("declined Order of an attempt still authorizing: only recorded (the provider call in flight settles it)", async () => {
+      const { req, cardAttempts, res } = setup({
+        order: { status: "failed", transactions: { payments: [{ status: "rejected", amount: "130.00" }] } },
+        cardAttempts: buildCardAttempts([attemptRow({ state: "authorizing" })]),
+      })
+
+      await POST(req, res)
+
+      expect(cardAttempts.recordOrder).toHaveBeenCalled()
+      expect(cardAttempts.failUnknown).not.toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(200)
+    })
+
+    it("pending Order: only recorded, 200, no event", async () => {
+      const { req, emit, cardAttempts, res } = setup({
+        order: { status: "action_required", transactions: { payments: [{ status: "action_required", amount: "130.00" }] } },
+      })
+
+      await POST(req, res)
+
+      expect(cardAttempts.recordOrder).toHaveBeenCalled()
+      expect(cardAttempts.failUnknown).not.toHaveBeenCalled()
+      expect(emit).not.toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(200)
+    })
+
+    it.each([
+      ["no attempt with this external_reference, paid", [], "processed", 503],
+      ["no attempt with this external_reference, not paid", [], "action_required", 200],
+    ])("%s → previous behavior (%s)", async (_label, rows, status, code) => {
+      const { req, emit, cardAttempts, res } = setup({
+        order: { status, transactions: { payments: [{ status, amount: "130.00" }] } },
+        cardAttempts: buildCardAttempts(rows as unknown[]),
+      })
+
+      await POST(req, res)
+
+      expect(cardAttempts.recordOrder).not.toHaveBeenCalled()
+      expect(emit).not.toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(code)
+    })
+
+    it.each([
+      ["the attempt belongs to another cart", { attempt: { cart_id: "cart_other" } }],
+      ["the attempt's session is not among the cart's sessions", { attempt: { payment_session_id: "payses_other" } }],
+      ["the session no longer points to the attempt", { session: { data: { card_attempt_id: "mpca_other" } } }],
+      ["the attempt is resolved", { attempt: { state: "resolved" } }],
+      ["the attempt is failed", { attempt: { state: "failed" } }],
+      ["the attempt is expired (operator)", { attempt: { state: "expired" } }],
+      ["the attempt was never authorized (submitted)", { attempt: { state: "submitted" } }],
+      ["the attempt already holds another Order", { attempt: { mercadopago_order_id: "ORD_OTHER" } }],
+      ["the session already holds another Order", { session: { data: { card_attempt_id: ATTEMPT_ID, mercadopago_order_id: "ORD_OTHER" } } }],
+      ["the amount differs", { session: { amount: 99 } }],
+    ])("paid Order, %s: not associated, 503 + error, nothing recorded", async (_label, change) => {
+      const { req, emit, cardAttempts, logger, res } = setup({
+        cardAttempts: buildCardAttempts([attemptRow((change as any).attempt)]),
+        sessions: [cardSession((change as any).session)],
+      })
+
+      await POST(req, res)
+
+      expect(cardAttempts.recordOrder).not.toHaveBeenCalled()
+      expect(cardAttempts.failUnknown).not.toHaveBeenCalled()
+      expect(emit).not.toHaveBeenCalled()
+      expect(logger.error).toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(503)
+    })
+
+    it("not paid Order that cannot be associated: 200 + warn, nothing recorded", async () => {
+      const { req, cardAttempts, logger, res } = setup({
+        order: { status: "action_required", transactions: { payments: [{ status: "action_required", amount: "130.00" }] } },
+        cardAttempts: buildCardAttempts([attemptRow({ state: "resolved" })]),
+      })
+
+      await POST(req, res)
+
+      expect(cardAttempts.recordOrder).not.toHaveBeenCalled()
+      expect(logger.warn).toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(200)
+    })
+
+    it("more than one attempt for the external_reference → 503, never picks one", async () => {
+      const { req, emit, cardAttempts, res } = setup({
+        cardAttempts: buildCardAttempts([attemptRow(), attemptRow({ id: "mpca_second" })]),
+      })
+
+      await POST(req, res)
+
+      expect(cardAttempts.recordOrder).not.toHaveBeenCalled()
+      expect(emit).not.toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(503)
+    })
+
+    it.each([
+      ["listing the attempts", { listMercadopagoCardAttempts: jest.fn(async () => { throw new Error("db down") }) }],
+      ["recording the Order", { recordOrder: jest.fn(async () => { throw new Error("db down") }) }],
+    ])("an error while %s → 503 (Mercado Pago retries), no event", async (_label, override) => {
+      const { req, emit, res } = setup({ cardAttempts: { ...buildCardAttempts(), ...override } })
+
+      await POST(req, res)
+
+      expect(emit).not.toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(503)
+    })
+
+    it.each([
+      ["a plain cart id (Pix, card before ADR-015)", "cart_123"],
+      ["a malformed composite reference", "cart_123-not-a-ulid"],
+    ])("%s never reaches the attempt module", async (_label, reference) => {
+      mockValidSignature()
+      mockValidOrder({ id: ORDER, external_reference: reference })
+      const { req, emit, listPaymentSessions } = buildReq({ query: { "data.id": ORDER } })
+      listPaymentSessions.mockResolvedValue([cardSession()])
+      const res = buildRes()
+
+      await POST(req, res)
+
+      expect(emit).not.toHaveBeenCalled()
+      expect(res.sendStatus).toHaveBeenCalledWith(503)
     })
   })
 })

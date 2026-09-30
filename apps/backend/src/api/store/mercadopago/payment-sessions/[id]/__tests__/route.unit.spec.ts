@@ -20,6 +20,7 @@ function buildReq(overrides: {
   paymentSession?: Record<string, unknown>
   cartGraphData?: unknown[]
   updatePaymentSession?: jest.Mock
+  cardAttempts?: Record<string, jest.Mock>
 }) {
   const paymentSession = overrides.paymentSession ?? {
     id: "payses_123",
@@ -47,6 +48,11 @@ function buildReq(overrides: {
     ]
   const graph = jest.fn(async () => ({ data: cartGraphData }))
   const logger = { warn: jest.fn() }
+  const cardAttempts = overrides.cardAttempts ?? {
+    listMercadopagoCardAttempts: jest.fn(async () => []),
+    submitAttempt: jest.fn(async () => ({ id: "mpca_new" })),
+    replaceSubmitted: jest.fn(async () => ({ id: "mpca_old", state: "replaced" })),
+  }
 
   const req: any = {
     params: { id: paymentSession.id },
@@ -69,12 +75,16 @@ function buildReq(overrides: {
           return logger
         }
 
+        if (key === "mercadopagoCardAttempt") {
+          return cardAttempts
+        }
+
         throw new Error(`Unexpected module request: ${key}`)
       },
     },
   }
 
-  return { req, logger, retrievePaymentSession, updatePaymentSession, authorizePaymentSession, graph }
+  return { req, logger, retrievePaymentSession, updatePaymentSession, authorizePaymentSession, graph, cardAttempts }
 }
 
 describe("mercadopago payment session route — Pix payment capability revocation", () => {
@@ -171,7 +181,7 @@ describe("mercadopago payment session route", () => {
         currency_code: "BRL",
         data: expect.objectContaining({
           existing: true,
-          card_token: "cardtoken_123",
+          card_attempt_id: "mpca_new",
           payment_method_id: "visa",
           installments: 1,
           transaction_amount: 100,
@@ -296,7 +306,8 @@ describe("mercadopago payment session route", () => {
 
       const [[updateInput]] = updatePaymentSession.mock.calls
       expect(updateInput.data).not.toHaveProperty("payment_type_id")
-      expect(updateInput.data.card_token).toBe("cardtoken_123")
+      expect(updateInput.data.card_attempt_id).toBe("mpca_new")
+      expect(updateInput.data).not.toHaveProperty("card_token")
     })
 
     it("leaves a Pix update without payment_type_id untouched", async () => {
@@ -553,4 +564,189 @@ describe("mercadopago payment session route — Pix payer name from the billing 
       expect(updateInput.data.payer).toEqual({ email: "buyer@example.com" })
     })
   })
+})
+
+// INV-009 / ADR-015: the card token goes only to the card attempt module;
+// PaymentSession.data keeps card_attempt_id; a blocking attempt freezes the
+// session.
+describe("mercadopago payment session route — card attempt (INV-009)", () => {
+  const CARD_BODY = {
+    cart_id: "cart_123",
+    card_token: "cardtoken_SECRET",
+    payment_method_id: "visa",
+    payment_type_id: "credit_card",
+    installments: 1,
+    transaction_amount: 100,
+    payer: { email: "customer@example.com" },
+  }
+  const session = (data: Record<string, unknown>) => ({
+    id: "payses_123",
+    amount: 100,
+    currency_code: "BRL",
+    provider_id: "pp_mercadopago",
+    payment_collection_id: PAYMENT_COLLECTION_ID,
+    data,
+  })
+
+  it("sends the card token to submitAttempt and keeps only card_attempt_id in the session data", async () => {
+    const { req, updatePaymentSession, cardAttempts } = buildReq({ body: CARD_BODY })
+    const res: any = { json: jest.fn() }
+
+    await POST(req, res)
+
+    expect(cardAttempts.submitAttempt).toHaveBeenCalledWith({
+      payment_session_id: "payses_123",
+      cart_id: "cart_123",
+      card_token: "cardtoken_SECRET",
+    })
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.card_attempt_id).toBe("mpca_new")
+    expect(updateInput.data.payment_type_id).toBe("credit_card")
+    expect(updateInput.data.installments).toBe(1)
+    expect(JSON.stringify(updateInput)).not.toContain("cardtoken_SECRET")
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain("cardtoken_SECRET")
+  })
+
+  it("looks for a blocking attempt with the blocking states only, without reading the ciphertext", async () => {
+    const { req, cardAttempts } = buildReq({ body: CARD_BODY })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    expect(cardAttempts.listMercadopagoCardAttempts).toHaveBeenCalledWith(
+      { payment_session_id: "payses_123", state: ["authorizing", "unknown", "expired"] },
+      { select: ["id", "state"], take: 1 }
+    )
+  })
+
+  it.each([
+    ["authorizing", "card_attempt_pending"],
+    ["unknown", "card_attempt_pending"],
+    ["expired", "card_attempt_manual_review"],
+  ])("refuses a new card while an attempt is %s (%s), without creating an attempt nor updating", async (state, code) => {
+    const cardAttempts = {
+      listMercadopagoCardAttempts: jest.fn(async () => [{ id: "mpca_open", state }]),
+      submitAttempt: jest.fn(),
+      replaceSubmitted: jest.fn(),
+    }
+    const { req, updatePaymentSession } = buildReq({ body: CARD_BODY, cardAttempts })
+
+    await expect(POST(req, { json: jest.fn() } as any)).rejects.toMatchObject({ code })
+    expect(cardAttempts.submitAttempt).not.toHaveBeenCalled()
+    expect(updatePaymentSession).not.toHaveBeenCalled()
+  })
+
+  it("the freeze also refuses a switch to Pix and an update without a new card", async () => {
+    for (const body of [
+      { cart_id: "cart_123", payment_method_id: "pix", payer: { email: "c@example.com" } },
+      { cart_id: "cart_123", installments: 3 },
+    ]) {
+      const cardAttempts = {
+        listMercadopagoCardAttempts: jest.fn(async () => [{ id: "mpca_open", state: "unknown" }]),
+        submitAttempt: jest.fn(),
+        replaceSubmitted: jest.fn(),
+      }
+      const { req, updatePaymentSession } = buildReq({
+        body,
+        cardAttempts,
+        paymentSession: session({ payment_method_id: "visa", card_attempt_id: "mpca_open" }),
+      })
+
+      await expect(POST(req, { json: jest.fn() } as any)).rejects.toMatchObject({ code: "card_attempt_pending" })
+      expect(updatePaymentSession).not.toHaveBeenCalled()
+      expect(cardAttempts.replaceSubmitted).not.toHaveBeenCalled()
+    }
+  })
+
+  it("propagates a refusal of submitAttempt (a concurrent authorization) without updating the session", async () => {
+    const cardAttempts = {
+      listMercadopagoCardAttempts: jest.fn(async () => []),
+      submitAttempt: jest.fn(async () => {
+        throw Object.assign(new Error("A previous card payment attempt is still being confirmed."), {
+          code: "card_attempt_pending",
+        })
+      }),
+      replaceSubmitted: jest.fn(),
+    }
+    const { req, updatePaymentSession } = buildReq({ body: CARD_BODY, cardAttempts })
+
+    await expect(POST(req, { json: jest.fn() } as any)).rejects.toMatchObject({ code: "card_attempt_pending" })
+    expect(updatePaymentSession).not.toHaveBeenCalled()
+  })
+
+  it("removes a card_token persisted by an older version from the session data", async () => {
+    const { req, updatePaymentSession } = buildReq({
+      body: { cart_id: "cart_123", installments: 2 },
+      paymentSession: session({ payment_method_id: "visa", card_token: "legacy_token", card_attempt_id: "mpca_keep" }),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data).not.toHaveProperty("card_token")
+    expect(updateInput.data.card_attempt_id).toBe("mpca_keep")
+    expect(updateInput.data.installments).toBe(2)
+  })
+
+  it("an update without a new card keeps the attempt and creates none", async () => {
+    const { req, updatePaymentSession, cardAttempts } = buildReq({
+      body: { cart_id: "cart_123", installments: 3 },
+      paymentSession: session({ payment_method_id: "visa", payment_type_id: "credit_card", card_attempt_id: "mpca_keep" }),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    expect(cardAttempts.submitAttempt).not.toHaveBeenCalled()
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data).toMatchObject({ card_attempt_id: "mpca_keep", payment_type_id: "credit_card", installments: 3 })
+  })
+
+  it("never accepts a card_attempt_id sent by the client", async () => {
+    const { req, updatePaymentSession } = buildReq({
+      body: { cart_id: "cart_123", installments: 1, card_attempt_id: "mpca_forged" },
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data).not.toHaveProperty("card_attempt_id")
+  })
+
+  it("switching to Pix releases the submitted card attempt (rule 2) and drops card_attempt_id", async () => {
+    const { req, updatePaymentSession, cardAttempts } = buildReq({
+      body: { cart_id: "cart_123", payment_method_id: "pix", card_token: "ignored_token", payer: { email: "c@example.com" } },
+      paymentSession: session({ payment_method_id: "visa", payment_type_id: "credit_card", card_attempt_id: "mpca_old" }),
+    })
+
+    await POST(req, { json: jest.fn() } as any)
+
+    expect(cardAttempts.replaceSubmitted).toHaveBeenCalledWith("mpca_old")
+    expect(cardAttempts.submitAttempt).not.toHaveBeenCalled()
+    const [[updateInput]] = updatePaymentSession.mock.calls
+    expect(updateInput.data.payment_method_id).toBe("pix")
+    expect(updateInput.data).not.toHaveProperty("card_attempt_id")
+    expect(updateInput.data).not.toHaveProperty("card_token")
+  })
+
+  it.each(["card_attempt_conflict", "card_attempt_not_found"])(
+    "switching to Pix with an attempt already final (%s) still updates the session",
+    async (code) => {
+      const cardAttempts = {
+        listMercadopagoCardAttempts: jest.fn(async () => []),
+        submitAttempt: jest.fn(),
+        replaceSubmitted: jest.fn(async () => {
+          throw Object.assign(new Error("x"), { code })
+        }),
+      }
+      const { req, updatePaymentSession } = buildReq({
+        body: { cart_id: "cart_123", payment_method_id: "pix" },
+        cardAttempts,
+        paymentSession: session({ payment_method_id: "visa", card_attempt_id: "mpca_done" }),
+      })
+
+      await POST(req, { json: jest.fn() } as any)
+
+      const [[updateInput]] = updatePaymentSession.mock.calls
+      expect(updateInput.data).not.toHaveProperty("card_attempt_id")
+    }
+  )
 })
