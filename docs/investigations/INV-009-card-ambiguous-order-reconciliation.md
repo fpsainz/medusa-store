@@ -5,8 +5,9 @@
 > - Implementação concluída (Fases 2–5), publicada em `6f5acdd` [commit `6f5acdd`].
 > - H1 confirmada ([E2E](#e2e-h1-e-h7-sandbox-2026-09-29)).
 > - H7 real **aprovado** no webhook, com fallback pela tentativa e regra 12 ([H7 no webhook real](#h7-no-webhook-real-2026-09-30-aprovado)).
+> - Cenários E2E 1, 2, 3, 7, 8 e 9 e as regressões de Pix e reembolso **aprovados** em 2026-09-30 ([E2E restantes](#e2e-restantes-sandbox-2026-09-30)).
 > - Continuam pendentes, sem bloquear a conclusão:
->   - os [cenários E2E adicionais](#o-que-não-foi-executado);
+>   - o [que ficou fora dos E2E](#o-que-continua-sem-execução);
 >   - um [artefato residual de sandbox](#dados-criados-e-pendência) em `unknown`, com a MP Order paga e sem pedido Medusa, **não resolvido**. Ele será resolvido por uma reentrega do webhook ou vira `expired` em 24 h.
 >
 > [Plano de implementação](#plano-de-implementação-adr-015-proposto), revisado pela [revisão de armazenamento do `card_token`](#revisão-armazenamento-do-card_token-2026-09-30) (2026-09-30) · Aberta em: 2026-09-29 · Commit: `6f5acdd`
@@ -1759,11 +1760,59 @@ Sem isso, ela vira `expired` em `created_at + 24 h` (2026-10-01, 13:06Z) e passa
 
 ### O que não foi executado
 
-Cenários do plano E2E não executados nesta etapa:
-- 1 (Order não criada);
-- 3 (Order `failed` + descarte);
-- 8 (troca de cartão bloqueada em `unknown`, testada só nos unitários);
-- 9 (terminal → novo cartão);
-- regressões de Pix e reembolso.
+Nesta etapa ficaram fora os cenários 1, 2, 3, 7, 8 e 9 e as regressões de Pix e reembolso. Todos foram executados depois: [E2E restantes](#e2e-restantes-sandbox-2026-09-30). O cenário 6 foi executado sem o job, que não existe no código atual.
 
-O cenário 6 foi executado sem o job, que não existe no código atual. H2, H3 e H4 continuam [não validado].
+## E2E restantes (sandbox, 2026-09-30)
+
+Código em `6f5acdd` (HEAD `cd84575`, só documentação depois). Marcações desta seção: as mesmas da [seção do H7](#h7-no-webhook-real-2026-09-30-aprovado). Nenhum código, teste, schema ou configuração do Mercado Pago foi alterado.
+
+### Método
+
+- Backend limpo (`pnpm dev`), sem wrapper de `fetch` no processo e sem o aviso do loader de chaves [log 2026-09-30]. O processo anterior, com um `fetch-spy` carregado por `NODE_OPTIONS`, foi encerrado.
+- Scripts `medusa exec` fora do repositório, pelo mesmo mecanismo do [H7](#método-cenário-6-do-plano-e2e): cart pelos workflows do core (R$ 510), Visa de teste tokenizado por `POST /v1/card_tokens` (titular `APRO` ou `OTHE`), envio do Brick pela rota HTTP real `POST /store/mercadopago/payment-sessions/:id` (publishable key), `completeCartWorkflow` como Place order.
+- Injeção no `POST /v1/orders`, nas 4 tentativas do SDK:
+  - **antes do envio:** o wrapper lança um erro de rede sem chamar o `fetch` real;
+  - **resposta perdida:** o `POST` chega ao Mercado Pago, o wrapper registra a resposta e a descarta.
+- Registro por `POST`: hash da chave, hash do body, HTTP, IDs de Order e payment. Nenhum token, dado de cartão ou header `Authorization` foi registrado.
+- **Túnel desligado** nos cenários 1, 2, 3, 7, 8 e 9 e na regressão Pix, para que a resolução só pudesse vir do Place order (replay), nunca do webhook. Nenhuma notificação entrou no backend nesse intervalo [log 2026-09-30]. O túnel voltou (mesmo host, conferido por hash) antes da regressão de reembolso.
+- Validação só por leitura: consultas ao banco (em transação `READ ONLY` na verificação complementar), `GET /v1/orders/{id}` e busca exata por `external_reference`.
+
+### Resultados
+
+| Cenário | Resultado | Evidência essencial |
+|---|---|---|
+| 1 — Order não criada | ✅ aprovado | 4 `POST` interrompidos antes da rede → tentativa `unknown` (`MPConnectionError`), sem Order, token mantido; session `pending`; Place order compensado; busca = 0. 2º Place order: **1** `POST`, mesma chave e mesmo hash de body, `201 processed/accredited`; `authorizing_at` avançou (regra 4) → `resolved` (regra 6), token destruído; 1 Payment, 1 captura, collection `completed`, pedido **#119**; busca = 1 |
+| 8 — troca bloqueada em `unknown` | ✅ aprovado | Com a tentativa do cenário 1 em `unknown`: novo cartão → **HTTP 400 `card_attempt_pending`**; troca para Pix → **HTTP 400 `card_attempt_pending`**; `session.data` idêntico antes e depois; nenhuma tentativa nova; tentativa ainda `unknown`, `updated_at` inalterado |
+| 3 — Order `failed` + resposta perdida | ✅ aprovado | `OTHE`: 4 `POST` com **402**, mesmo payment, respostas descartadas → `unknown`, sem Order, token mantido; busca = 1 Order `failed/failed`. 2º Place order: **1** `POST`, mesma chave e mesmo body → **mesmo 402, mesmo payment** → tentativa `failed` (`MPPaymentError`, regra 7 depois da regra 4), token destruído; nenhum Payment, nenhum pedido, cart aberto |
+| 9 — terminal → novo cartão | ✅ aprovado | Mesmo cart do 3: novo Brick (`APRO`) → HTTP 200, **nova** tentativa e novo `external_reference`; a antiga continua `failed`. Place order: 1 `POST` com **outra** chave e outro body → `201 processed/accredited` → `resolved`; session `authorized` com a tentativa nova, sem `card_token`; 1 Payment, 1 captura, pedido **#122**. Busca: 1 Order para cada `external_reference` (a `failed` e a paga) |
+| 2 — Order paga + resposta perdida + replay | ✅ aprovado | 4 `POST` com `201`, a **mesma** Order, respostas descartadas → `unknown`, sem Order na tentativa; busca = 1 Order `processed/accredited`. 2º Place order: 1 `POST`, mesma chave e body → `201` com a **mesma** Order → `resolved` (regras 4 → 6); `body_sha256` inalterado; 1 Payment, 1 captura, pedido **#124**; 5 `POST` no total, todos com a mesma chave |
+| 7 — retry idêntico | ✅ aprovado | Como o 2, com um Place order extra também com resposta perdida: 8 `POST` com a mesma chave, o mesmo hash de body e a mesma Order; `authorizing_at` avançou no retry (regra 4) e a tentativa voltou a `unknown` com o token. Place order final: 1 `POST` (9 no total, todos iguais) → mesma Order → `resolved`; 1 Payment, 1 captura, pedido **#127**; busca = 1 |
+| Regressão Pix | ✅ aprovado¹ | Rotas reais de update (Pix) e prepare: 200, QR presente; chave do Pix = `sha256("<session>:pix:510.00:0")` (fórmula anterior); Order `processed/accredited` (~3 s, `APRO`), `external_reference` = `cart_id`. Place order: **0** `POST /v1/orders`, **0** chamadas a `getCardOrderIdempotencyKey` (contador ativo: 1 `authorizePayment`), nenhuma tentativa de cartão criada; session `authorized`; 1 Payment, 1 captura, pedido **#128**; busca = 1 |
+| Regressão reembolso | ✅ aprovado | `refundPaymentWorkflow` (como na [INV-004](INV-004-refund-payment-amount-and-idempotency.md#e2e-sandbox-2026-09-29)). Cartão #119, parcial R$ 100: 1 `POST …/refund` com `transactions`/`"100.00"`, chave = `refund.id`, 201, reembolso `processed`, Order `processed/partially_refunded`, `refunded_amount` 100. Pix #128, total R$ 510: sem body, chave = `refund.id`, 201, `processed`, Order `refunded/refunded`, `refunded_amount` 510 |
+
+¹ O veredito automático do script marcou 2 checks como falhos por defeito do próprio script: a busca por `external_reference` feita logo depois do prepare voltou vazia, e o script comparou a session com um ID `undefined`. Uma verificação complementar só de leitura confirmou session `authorized` com `mercadopago_order_id` = a Order Pix, o Payment com a mesma Order, a Order paga e a busca = 1. O cenário não foi repetido. A busca vazia logo depois da criação não teve o corpo registrado; a causa (indexação ou relógio) não foi determinada [não validado]. No cenário 1, a primeira execução também parou por defeito do script (o total da busca veio como texto `"0"`). Ele continuou no mesmo cart, depois de reler banco e Mercado Pago sem mudança.
+
+### IDs [sandbox 2026-09-30] [banco 2026-09-30]
+
+| Cenário | Cart | Tentativa(s) | MP Order | Pedido |
+|---|---|---|---|---|
+| 1 + 8 | `cart_01M3SDVAG8V1QQXPEHD5AM0B1S` | `mpca_01M3SDVEE5M2BDGM9RGZ78B37T` | `ORDTST01M3SDX73XDKM81PVCCFVEN4JY` | #119 |
+| 3 + 9 | `cart_01M3SE9RN2SD0GM221BK78CCP9` | `mpca_01M3SE9WJ1PMGQQM8VRAT18C96` (`failed`), `mpca_01M3SEADZYV6N2ZWH5S12ETNQD` | `ORDTST01M3SEA45Y636KKNNP5EV2MZJ5` (`failed`), `ORDTST01M3SEANC1YBCJVMG3ZYY7H923` | #122 |
+| 2 | `cart_01M3SEB027QS6A9VJKYBT28YPZ` | `mpca_01M3SEB3GYC2VP4VX38A7PSBWM` | `ORDTST01M3SEBAYCCRSE785K9FA82RXS` | #124 |
+| 7 | `cart_01M3SEBZJQHFK77KQHX3Y2Q5K2` | `mpca_01M3SEC39FQ4GCDWW6G8KTAY5G` | `ORDTST01M3SECAS51ADZ9P89T8G8325Y` | #127 |
+| Pix | `cart_01M3SEDCM3YV4WTD2R53A9A1QZ` | — | `ORDTST01M3SEDPJB9WDPY4FJ8N07PQ20` | #128 |
+
+Reembolsos: `ref_01M3SEN2XVFWHES3GWVT8H9YEX` (#119, R$ 100) e `ref_01M3SEN5Y8RQT2G8P9XBJ892PK` (#128, R$ 510).
+
+### Observações
+
+- **O corpo do `402` contém uma referência `ORDTST…`** igual ao ID da Order `failed` (extraída do texto da resposta; o campo não foi identificado) [sandbox 2026-09-30]. A INV-008 registra que o `402` "não traz o ID da Order"; ela não foi editada. Isso não muda o fluxo: o provider não lê o corpo do erro, e a tentativa `failed` fica sem `mercadopago_order_id`.
+- Depois que o túnel voltou, chegaram notificações `type=order` das Orders do #119 e do #128 (com `external_reference` no formato da tentativa e `cart_id`, respectivamente), as duas com HTTP 200 [log 2026-09-30]. Entregas depois do reembolso; `action` não registrado.
+
+### O que continua sem execução
+
+- Cenário 6 com o job: o job não existe no código.
+- Regressão E2E do cancelamento (ADR-012/013) depois de `6f5acdd`.
+- `cancelPayment` (cartão), que reutiliza a chave base [não validado].
+- H2, H3 e H4 continuam [não validado].
+- O [artefato residual](#dados-criados-e-pendência) não foi relido nesta etapa.
