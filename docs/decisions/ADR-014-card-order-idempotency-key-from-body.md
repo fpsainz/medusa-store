@@ -1,6 +1,6 @@
 # ADR-014: Idempotency key da Order de cartão derivada do body
 
-> Status: aceito [decisão humana 2026-09-29] · Data: 2026-09-29 · Commits: — (ainda não commitado)
+> Status: aceito [decisão humana 2026-09-29] · Data: 2026-09-29 · Commits: `fb6753e`
 
 Investigação e evidências: [INV-008](../investigations/INV-008-card-idempotency-key-per-session.md). Regra garantida pelo código: invariante 47 em [../mercadopago/invariants.md](../mercadopago/invariants.md). **[MCP 2026-09-29]** indica documentação oficial do Mercado Pago consultada pelo MCP `search_documentation` (MLB) nessa data.
 

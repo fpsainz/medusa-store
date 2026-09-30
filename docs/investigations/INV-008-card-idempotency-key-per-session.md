@@ -1,6 +1,6 @@
 # INV-008: idempotency key do cartão estável durante a Payment Session
 
-> Status: **concluída** (hipótese confirmada por E2E sandbox; corrigida pela estratégia B, [ADR-014](../decisions/ADR-014-card-order-idempotency-key-from-body.md) aceito; regressão E2E sandbox em 2026-09-29; código ainda não commitado) · Aberta em: 2026-09-29 · Commit: `629acfd`
+> Status: **concluída** (hipótese confirmada por E2E sandbox; corrigida pela estratégia B; regressão E2E sandbox em 2026-09-29) · Aberta em: 2026-09-29 · Concluída em: 2026-09-29 · Commit: `629acfd` (investigação e E2E com a correção ainda fora de commit; correção publicada em `fb6753e` [commit `fb6753e`]) · Decisão: [ADR-014](../decisions/ADR-014-card-order-idempotency-key-from-body.md)
 
 ## Achado
 
