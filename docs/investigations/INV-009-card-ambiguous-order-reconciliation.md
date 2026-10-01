@@ -8,7 +8,7 @@
 > - Cenários E2E 1, 2, 3, 7, 8 e 9 e as regressões de Pix e reembolso **aprovados** em 2026-09-30 ([E2E restantes](#e2e-restantes-sandbox-2026-09-30)).
 > - Continuam pendentes, sem bloquear a conclusão:
 >   - o [que ficou fora dos E2E](#o-que-continua-sem-execução);
->   - um [artefato residual de sandbox](#dados-criados-e-pendência) em `unknown`, com a MP Order paga e sem pedido Medusa, **não resolvido**. Ele será resolvido por uma reentrega do webhook ou vira `expired` em 24 h.
+>   - um [artefato residual de sandbox](#dados-criados-e-pendência) em `unknown`, com a MP Order paga e sem pedido Medusa, **não resolvido**. Ele pode ser resolvido por uma reentrega do webhook ou por um Place order antes do prazo; não vira `expired` sozinho (correção de 2026-09-30: a expiração é lazy, ver [README do Mercado Pago](../mercadopago/README.md#prazo-da-tentativa-de-cartão-implementação-atual)).
 >
 > [Plano de implementação](#plano-de-implementação-adr-015-proposto), revisado pela [revisão de armazenamento do `card_token`](#revisão-armazenamento-do-card_token-2026-09-30) (2026-09-30) · Aberta em: 2026-09-29 · Commit: `6f5acdd`
 
@@ -1756,7 +1756,7 @@ Não bloqueia a conclusão da investigação. Pelo desenho, a tentativa é resol
 - por uma reentrega do webhook, pelo mesmo caminho do s6b;
 - ou por um Place order no cart (replay com a mesma chave e o mesmo body).
 
-Sem isso, ela vira `expired` em `created_at + 24 h` (2026-10-01, 13:06Z) e passa para revisão manual.
+O prazo é `created_at + 24 h` (2026-10-01, 13:06Z). Correção de 2026-09-30: a tentativa **não** vira `expired` sozinha nesse momento. A expiração só acontece num Place order depois do prazo (o `authorizePayment` que lê o token), e não existe job; até lá ela continua `unknown`, com o ciphertext, e o webhook ainda a resolve. Um Place order depois do prazo a torna `expired` e deixa o caso para revisão manual (regra 11). Detalhes: [README do Mercado Pago](../mercadopago/README.md#prazo-da-tentativa-de-cartão-implementação-atual).
 
 ### O que não foi executado
 

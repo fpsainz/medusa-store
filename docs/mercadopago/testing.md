@@ -8,6 +8,8 @@
 cd apps/backend && pnpm run test:unit
 ```
 
+Resultado em 2026-09-30, com os testes de `cancelPayment` (código em `e822f52`, spec novo sem commit): **23 suítes, 524 testes, todos passando**; `tsc --noEmit` limpo. Antes deles: 22 suítes, 515 testes.
+
 Resultado em 2026-09-29, com o workflow de cancelamento que cancela o Pix antes do core ([ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)), commit `12c5ff6`: **18 suítes, 336 testes, todos passando.** Antes, com só o hook ([ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md)): 15 suítes, 310 testes. Em `0821822`: 13 suítes, 285 testes.
 
 | Spec (em `apps/backend/src/`) | Cobre |
@@ -25,13 +27,15 @@ Resultado em 2026-09-29, com o workflow de cancelamento que cancela o Pix antes 
 | `api/admin/orders/[id]/cancel/__tests__/route.unit.spec.ts` | Rota sobrescrita: não desliga a autenticação padrão; chama o wrapper com `order_id`/`canceled_by`; responde `{ order }` com `req.queryConfig.fields`; erro do workflow propaga sem ler nem responder |
 | `workflows/hooks/__tests__/order-canceled.unit.spec.ts` | Hook `orderCanceled` (rede de segurança): registro, seleção da session Pix pendente, nenhuma ação fora dela, ambiguidade recusada, erros relançados. O rollback real do workflow está nos E2E da INV-005 e da INV-006 |
 | `modules/mercadopago/__tests__/refund.unit.spec.ts` | `refundPayment`: valor como `BigNumberInput`, idempotency key por reembolso, total sem body × parcial com `transactions`, recusas antes da chamada, erro da API propagado (invariantes 42–44). Mock do SDK; nenhum reembolso real |
+| `modules/mercadopago/__tests__/cancel-payment.unit.spec.ts` | `cancelPayment`: recusa sem `mercadopago_order_id` antes da chamada; `POST …/cancel` com exatamente a chave base (não o `payment.id` do contexto; este só na falta dela); repetição = mesmo request; `data` com o status da resposta; erro da API propagado; nenhuma chamada ao módulo de tentativas. Invariante 48: criação de cartão, criação e cancelamento de Pix e reembolso nunca enviam a chave base crua. Mock do SDK |
 | `modules/payment-access/__tests__/*.unit.spec.ts` | Token opaco, hash, validação, limite por session, corrida de emissões, revogação, limpeza com retenção de 7 dias (lotes, repetição) |
 | `jobs/__tests__/cleanup-payment-access-grants.unit.spec.ts` | Job de limpeza: chama o workflow e registra só a quantidade |
 | `workflows/payment-access/__tests__/pix-access-binding.unit.spec.ts` | Condições de emissão da capability Pix |
 
 ### Sem cobertura
 
-- `cancelPayment`, `retrievePayment`, `getPaymentStatus`, `capturePayment`, `initiatePayment` (nenhuma menção no spec do provider).
+- `retrievePayment`, `getPaymentStatus`, `capturePayment`, `initiatePayment` (nenhuma menção no spec do provider).
+- `cancelPayment` não tem teste automatizado contra a Orders API real nem pelo caminho do core; a execução no sandbox de 2026-09-30 foi por chamada direta ao provider ([status.md](../status.md#cancelpayment-do-cartão-2026-09-30)).
 - `refundPayment` não tem teste automatizado contra a Orders API real. O E2E manual de 2026-09-29 (cartão e Pix, total e parcial) está na [INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md#e2e-sandbox-2026-09-29).
 - Um teste que falhe se `id` for adicionado ao provider em `medusa-config.ts`.
 - Testes de integração HTTP (não existem) e CI (não existe).

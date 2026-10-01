@@ -24,7 +24,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 - Cartão e Pix usam **o mesmo provider** (`pp_mercadopago`). A diferença está só em `session.data` (ver "Discriminação cartão × Pix").
 - Webhook com validação HMAC: [webhook.md](webhook.md).
 - Reembolso (`refundPayment`): total sem body, parcial com `transactions[{ id, amount }]`, uma idempotency key por reembolso (`refund.id`). Testes unitários e E2E no sandbox (2026-09-29, cartão e Pix). Regras: invariantes 42–44; decisão: [ADR-011](../decisions/ADR-011-mercadopago-refund-contract.md); evidências: [INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md).
-- Cancelamento (`cancelPayment`): implementado, sem testes unitários. Exercitado no sandbox em 2026-09-30 só por chamada direta ao provider, numa Order de cartão com captura manual. O checkout não cria Order de cartão cancelável: [status.md](../status.md#cancelpayment-do-cartão-2026-09-30).
+- Cancelamento (`cancelPayment`): implementado, com testes unitários (`cancel-payment.unit.spec.ts`; invariante 48). Exercitado no sandbox em 2026-09-30 só por chamada direta ao provider, numa Order de cartão com captura manual. O checkout não cria Order de cartão cancelável: [status.md](../status.md#cancelpayment-do-cartão-2026-09-30).
 
 ## Mapa de arquivos
 
@@ -127,6 +127,15 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 - **Transitório, nunca persistido:** `mercadopago_pix_action`.
 - A lista de campos da Order Pix atual está em `PIX_ORDER_FIELDS` (`service.ts`).
 - O Payment criado a partir da session guarda uma cópia desses campos em `payment.data`.
+
+### Prazo da tentativa de cartão (implementação atual)
+
+Conferido no código em `e822f52` (2026-09-30). O prazo é único, `created_at + 24 h` ([ADR-015](../decisions/ADR-015-card-ambiguous-order-reconciliation.md), decisão 12), avaliado pelo relógio do PostgreSQL (`PAST_DEADLINE_SQL`, `attempt-states.ts`).
+
+- **A expiração é lazy.** `expireIfPastDeadline` (regras 10 e 2) só é chamada por `readCardToken` e `resumeAuthorization` (`mercadopago-card-attempt/service.ts`), que só o `authorizePayment` do provider chama, e só quando a tentativa ainda não tem Order registrada (Place order). No caminho do webhook a Order já foi registrada pelo fallback, e o provider só lê a Order (`settleKnownCardOrder`), sem tocar no prazo. Nenhum job, subscriber ou worker executa essa transição; o único job do projeto é `cleanup-payment-access-grants`.
+- **Tentativa `authorizing`/`unknown` sem Place order depois do prazo:** continua com esse estado no banco e com o `encrypted_card_token`. O módulo recusa entregar o token (`readCardToken` confere o prazo antes de decifrar), mas o ciphertext só é anulado numa transição que destrói o token: estado terminal, `expired` ou remoção da session.
+- **Webhook:** o fallback por tentativa e a regra 12 não conferem o prazo. Uma tentativa ainda `unknown` cuja Order foi paga é resolvida pelo webhook (só `GET`) mesmo depois de 24 h ([webhook.md](webhook.md)). Depois que um Place order a torna `expired`, o fallback a recusa (Order paga → 503) e só a regra 11 (operador) a resolve.
+- **Divergência com o ADR-015** ("passado o prazo, … o token é destruído"): para tentativas abandonadas, a destruição em 24 h não é garantida hoje. Pendência de decisão em [status.md](../status.md#pendências-funcionais-por-prioridade).
 
 ### Interno × público
 

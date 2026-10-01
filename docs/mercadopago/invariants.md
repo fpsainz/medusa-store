@@ -21,7 +21,8 @@ Specs (caminhos relativos a `apps/backend/src/`):
 `ST` = `workflows/steps/__tests__/cancel-pending-pix-charge.unit.spec.ts` ·
 `CW` = `workflows/__tests__/cancel-order-with-pending-pix.unit.spec.ts` ·
 `AC` = `api/admin/orders/[id]/cancel/__tests__/route.unit.spec.ts` ·
-`RF` = `modules/mercadopago/__tests__/refund.unit.spec.ts`
+`RF` = `modules/mercadopago/__tests__/refund.unit.spec.ts` ·
+`CP` = `modules/mercadopago/__tests__/cancel-payment.unit.spec.ts`
 
 ## Identidade
 
@@ -96,6 +97,10 @@ Detalhes em [webhook.md](webhook.md). Teste de todos os itens abaixo: `W`.
 ## Captura
 
 22. **A captura é automática** (`processing_mode: 'automatic'`); `capturePayment` lança erro de propósito. — `service.ts`. Sem teste. [ADR-002](../decisions/ADR-002-orders-api-automatic-capture.md)
+
+## Cancelamento do pagamento
+
+48. **A chave base da session (`mercadopago_idempotency_key`) só é enviada crua por `cancelPayment`.** `cancelPayment` manda `POST /v1/orders/{id}/cancel` com exatamente a chave base (sem derivação; `context.idempotency_key` só na falta dela), devolve `data` com o status da Order da resposta e propaga o erro da API; não lê nem altera a tentativa de cartão. Toda outra escrita na Orders API usa uma chave diferente: criação da Order de cartão (invariante 47), criação e cancelamento do Pix (invariante 11) e reembolso (invariante 43). Por isso reutilizar a chave base no cancelamento não colide com outra operação; uma escrita nova que a envie crua quebra esta regra. — `service.ts` (`cancelPayment`, `getIdempotencyKey`). Teste: `CP`.
 
 ## Reembolso
 
