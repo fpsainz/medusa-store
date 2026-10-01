@@ -1,385 +1,113 @@
 # Status do projeto
 
-> Status: vigente · Última verificação: 2026-09-30 · Commit: `6f5acdd` · Branch: `rebuild/mercadopago-pix-storefront`
+> Status: vigente · Última verificação: 2026-10-01 · Commit: `bdefe51` · Branch: `upgrade/medusa-2.21.x`
 
-Retrato atual. Atualizar ao fim de cada etapa relevante. Histórico fica no Git, não aqui. Marcadores de origem: [README.md](README.md#convenções).
+Responde só **"onde o projeto está agora?"**. Explicações, evidências e histórico ficam nos documentos ligados; ler um deles só quando a tarefa tocar aquele tema ([roteador](README.md#roteador-tarefa--o-que-ler)). Histórico deste arquivo: Git (a versão longa anterior está em `git show bdefe51:docs/status.md`). Marcadores de origem: [README.md](README.md#convenções).
 
-**Próxima sessão começa por:** commit da implementação do [ADR-016](decisions/ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md) (aceito em 2026-09-30 [decisão humana 2026-09-30]; implementado no working tree sobre `e822f52`, **sem commit**; backend com 23 suítes e 569 testes, `tsc` limpo; E2E 1, 1b, 2a e 2b **aprovados** [sandbox 2026-09-30/2026-10-01]; [abaixo](#baixa), item 14), depois do commit dos testes de `cancelPayment` e da correção documental da expiração (2026-09-30, sem commit; item 9); depois, a decisão sobre o artefato residual **antes de 2026-10-01 13:06Z** (prazo da tentativa) e o push. A atualização documental da regressão do cancelamento está em `e822f52` [commit `e822f52`]. Os E2E da INV-009 estão em `4138f7d` [commit `4138f7d`]. Regressão do cancelamento depois de `6f5acdd` **aprovada** (#124, [INV-006](investigations/INV-006-payment-collection-rollback.md#regressão-depois-de-6f5acdd-sandbox-2026-09-30)); `cancelPayment` do cartão **exercitado** no sandbox ([evidência](#cancelpayment-do-cartão-2026-09-30)). Continua pendente o artefato residual da INV-009. **E2E restantes da INV-009 aprovados em 2026-09-30** ([evidência](investigations/INV-009-card-ambiguous-order-reconciliation.md#e2e-restantes-sandbox-2026-09-30)), com túnel desligado e resolução só pelo Place order: cenário 1 (Order não criada → replay cria, #119), 8 (novo cartão e troca para Pix → 400 `card_attempt_pending` em `unknown`), 3 (`OTHE` + resposta perdida → mesmo 402 → `failed`), 9 (terminal → novo cartão, #122), 2 (Order paga + resposta perdida → mesma Order, #124), 7 (retry idêntico: 9 `POST` com a mesma chave e o mesmo body, 1 Order, #127); regressão Pix (#128, sem derivação de chave de cartão nem tentativa) e reembolso (parcial cartão #119, total Pix #128, chave = `refund.id`). A [INV-009](investigations/INV-009-card-ambiguous-order-reconciliation.md) foi **concluída** em 2026-09-30, com a implementação (Fases 2–5) publicada em `6f5acdd` [commit `6f5acdd`]. [ADR-015](decisions/ADR-015-card-ambiguous-order-reconciliation.md) **aceito** em 2026-09-30 [decisão humana 2026-09-30]. H1 confirmada. **H7 aprovado no webhook real** em 2026-09-30: resposta do `POST` perdida → tentativa `unknown` → webhook reenviado → fallback pela tentativa → regra 12 → pedido #116, com 1 Payment e 1 captura ([evidência](investigations/INV-009-card-ambiguous-order-reconciliation.md#h7-no-webhook-real-2026-09-30-aprovado)). Um artefato residual de sandbox continua `unknown`, com a MP Order paga e sem pedido Medusa. Não está resolvido, mas não bloqueia a conclusão: pode ser resolvido por uma reentrega do webhook ou por um Place order antes do prazo. Ele **não** vira `expired` sozinho. Com o ADR-016 (sem commit), um Place order depois do prazo também não o expira: busca a Order e, paga e coerente, conclui o cart com ela, só com `GET` ([README](mercadopago/README.md#prazo-da-tentativa-de-cartão-implementação-atual)); o artefato não foi tocado ([pendência](investigations/INV-009-card-ambiguous-order-reconciliation.md#dados-criados-e-pendência)). Histórico: Revisado em 2026-09-30: a tentativa e o `card_token` (cifrado com AES-256-GCM) saem de `PaymentSession.data` e passam para um módulo próprio ([revisão](investigations/INV-009-card-ambiguous-order-reconciliation.md#revisão-armazenamento-do-card_token-2026-09-30)). Spike de `dependencies` do payment module concluído em 2026-09-30: suportado, com restrições (acesso lazy e checagem de presença); provider, workflow e webhook resolvem o módulo, inclusive depois de restart; a transação do módulo sobrevive à falha do workflow. O spike foi removido. Desenho da entidade `mercadopago_card_attempt` pronto (2026-09-30, ENTITY DESIGN READY). Teste com linha real numa tabela temporária: a linha criada por step e pelo provider sobrevive à falha e à compensação do workflow; o índice único parcial garante uma tentativa viva por session; o compare-and-set tem exatamente um vencedor. Tabela e arquivos temporários removidos. Fase 2 executada em 2026-09-30, com autorização em gates. Módulo `mercadopagoCardAttempt` criado e registrado como dependência do payment module. Aplicada **somente** a `Migration20260930030200` (tabela `mercadopago_card_attempt`, aditiva; registro 182 → 183; nenhuma outra pendente) [banco 2026-09-30]. T1–T4 repetidos na tabela definitiva: a linha sobrevive à falha do workflow, há uma tentativa viva por session, o compare-and-set tem um vencedor, e `CHECK` e únicos funcionam. Dois boots reais limpos. Backend com 19 suítes e 353 testes; `tsc` limpo. Nenhum código usa o módulo ainda (checkout inalterado). Fase 3 (investigação, 2026-09-30): máquina de estados e criptografia definidas e verificadas em runtime (Gate A e Gate B concluídos, **DESIGN READY**, condicionado à confirmação de duas correções: prazo único `created_at + 24 h` e transição `unknown → resolved`). Nenhum código alterado.
+Legenda: ✅ comprovado · ⚠ pendente ou parcial · 🔍 investigação ou decisão em aberto · 🛠 dívida técnica
 
-   Fase 4 (2026-09-30, opção A): as duas correções foram aprovadas e o módulo recebeu a máquina de estados (exatamente as transições aprovadas; prazo único `created_at + 24 h`; `unknown → resolved`; `UPDATE` condicional com `updated_at` explícito; destruição idempotente do token) e a criptografia do token (AES-256-GCM, `authTagLength: 16`, envelope estrito, anel de chaves `MERCADOPAGO_CARD_TOKEN_KEYS`/`_CURRENT_KID`, AAD canônica). Testes:
-   - 99 unitários novos;
-   - integração com a tabela real (round-trip, regras, prazo, concorrência, rollback) e boot com configuração malformada/ausente;
-   - backend com 22 suítes e 449 testes; `tsc` limpo.
+## Próxima ação
 
-   Fase 5 (2026-09-30, concluída; opção B: regras 3/4/5 no provider, sem hook): provider, rota de update e webhook integrados ao módulo; o `card_token` não é mais persistido em `PaymentSession.data` (só `card_attempt_id`); o webhook tem fallback pela tentativa (`<cart_id>-<ULID>`) só quando nenhuma session guarda a Order. Validação: 22 suítes e 515 testes, `tsc` limpo. E2E com H7 real aprovado em 2026-09-30 (acima). Demais pendências reais: cenário B do webhook, a Order órfã da INV-003 e a garantia de destruição do token em 24 h (abaixo). `cancelPayment` (cartão) passou a ter testes em 2026-09-30 (invariante 48). A [INV-007](investigations/INV-007-payment-button-first-session.md) (sem bug) foi publicada em `1168a1f` e a [INV-008](investigations/INV-008-card-idempotency-key-per-session.md) (corrigida pelo [ADR-014](decisions/ADR-014-card-order-idempotency-key-from-body.md)) em `fb6753e` [commit `1168a1f`, `fb6753e`]; não há commit pendente dessas investigações.
+1. Decidir o destino do artefato residual da INV-009 (pendências, abaixo).
+2. Decidir quando publicar e integrar a branch `upgrade/medusa-2.21.x` (sem push nem merge até agora).
 
-Legenda: ✅ comprovado · ⚠ pendente ou comprovado só antes do hardening · 🔍 investigação aberta · 🛠 dívida técnica · ❌ não existe · — sem registro
+## Baseline
 
-## Git
+| Item | Estado |
+|---|---|
+| Branch | `upgrade/medusa-2.21.x` sobre `a92d307`: `bdefe51 chore(medusa): upgrade core to 2.21.2` e, em seguida, o commit só de documentação que reorganiza `docs/` e registra a INV-010; só local (não publicado) [`git status` 2026-10-01] |
+| Outras branches | `rebuild/mercadopago-pix-storefront` em `a92d307`, igual ao `origin`; `main` sem o Pix; `recovery/base-81f5caf` em `81f5caf` [`git status` 2026-10-01] |
+| Medusa | 2.21.2 no backend; no storefront, `js-sdk`, `ui-preset` e `types` 2.21.2 [commit `bdefe51`] |
+| Exceção de versão | `@medusajs/icons` 2.20.1 no storefront (único `@medusajs` 2.20.1 no lockfile); motivo não registrado |
+| Migrations | `db:migrate` executado em 2026-10-01 02:08Z [decisão humana 2026-10-01]; aplicou as 2 migrations novas do `@medusajs/search`; nenhuma pendente nos módulos carregados [banco 2026-10-01] ([INV-010](investigations/INV-010-medusa-2-21-2-upgrade.md#migrations-banco-2026-10-01)) |
+| Testes e builds | backend 23 suítes / 569 testes; `tsc` limpo; `medusa build` e `next build` passando (2026-10-01, `bdefe51`) |
+| Runtime no 2.21.2 | ✅ regressão mínima 5 de 5 PASS: boot, cartão (#145), Pix pago pelo webhook (#146), redação da Store API, cancelamento pelo Admin (#145, #147) [sandbox 2026-10-01] ([INV-010](investigations/INV-010-medusa-2-21-2-upgrade.md#validação-em-runtime-sandbox-2026-10-01)) |
 
-- Branch atual `rebuild/mercadopago-pix-storefront`. Este status cobre as alterações até o commit `6f5acdd`. Commits posteriores só de documentação ficam registrados no histórico do Git (`git log main..HEAD`). Commits relevantes sobre a `main`: `81f5caf` Pix backend, `c41d686` Pix Review/storefront, `0326748` endurecimento do webhook Pix, `3a56150` correção da INV-001, `01991a0` documentação do E2E do webhook, `c6beff1` redação do `data` do Mercado Pago na Store API, `1749309` resposta mínima de `orders/:id/pix`, `780b740` prazo explícito do Pix, `87587f6` `carts/:id/pix` fechado após a conclusão, `86b8ed0` módulo `paymentAccess`, `93abe1f` emissão/revogação da capability, `d5a4b23` leitura por capability, `9884ba5` cookie no storefront, `4de8ace` confirmação por capability, `f2ceb7c` correção do `next dev`, `6b92141` remoção de `orders/:id/pix`, `536d00e` limpeza de capabilities, `5ccd353` janela de pagamento na Review, `6e4579b` status real na capability, `fb5d9a0` nome do pagador Pix (ADR-010), `0821822` reembolso (ADR-011), `12c5ff6` cancelamento do pedido com Pix pendente (ADR-012/ADR-013), `6f5acdd` reconciliação da tentativa de cartão (INV-009, ADR-015). A branch está publicada em `origin` até `cd84575` (inclui `6f5acdd`) [`git status` 2026-09-30]. O Pix não está na `main`.
-- Existe a branch local `recovery/base-81f5caf`, que aponta para `81f5caf`.
+**Validade da evidência.** Todo E2E e toda leitura do core registrados até 2026-09-30 foram feitos no Medusa **2.20.1**. No 2.21.2, valem os caminhos revalidados pela [INV-010](investigations/INV-010-medusa-2-21-2-upgrade.md#impacto-nos-documentos) (coluna "2.21.2" abaixo); os demais continuam com evidência só do 2.20.1 ([limites](investigations/INV-010-medusa-2-21-2-upgrade.md#limites)).
 
 ## Matriz de evidências
 
-"Teste unitário" = specs do backend (157 testes passando em 2026-09-27, com a correção do ADR-006). "E2E real" = checkout real em sandbox; os números são pedidos Medusa. O E2E Pix #75–#78 foi executado **antes** do hardening do webhook (`0326748`) [decisão humana 2026-09-27]; #79 em diante, depois.
+"Teste unitário" = specs do backend. "E2E real" = checkout real em sandbox, **no Medusa 2.20.1**; os números são pedidos Medusa. #75–#78 foram executados antes do hardening do webhook (`0326748`) [decisão humana 2026-09-27]; #79 em diante, depois. Coluna "2.21.2": o que foi revalidado no baseline atual, com evidência na [INV-010](investigations/INV-010-medusa-2-21-2-upgrade.md#resultados) [sandbox 2026-10-01].
 
-| Área | Implementado | Teste unitário | E2E real | Estado |
+| Área | Teste unitário | E2E real (2.20.1) | 2.21.2 | Onde está a evidência |
 |---|---|---|---|---|
-| Pix preparado na Review | ✅ | ✅ | ✅ | Validado |
-| QR / copia e cola | ✅ | ✅ | ✅ | Validado |
-| A — Pix pendente → Place order | ✅ | ✅ | ✅ #75, #78 (antes); #81, #82, #84, #86 (depois) | Validado |
-| B — Place order → webhook depois | ✅ | ✅ | ✅ #76 (antes); ⚠ depois: NÃO REPRODUZIDO em 2026-09-29 ([E2E-B](investigations/E2E-B-2026-09-29.md)): aprovação em ~3,5 s, cart concluído pelo webhook antes do Place order | Validado só antes do hardening |
-| B' — webhook (pago) → usuário na Review → Place order | ✅ | ✅ | ✅ #91 (2026-09-29, [E2E-B-PRIME](investigations/E2E-B-PRIME-2026-09-29.md)) | Validado (CONFIRMADO) |
-| C — Pix pago → webhook → aba fechada, sem Place order | ✅ | parcial¹ | ✅ #77 (antes); ✅ #83 (depois, webhook real) | Validado |
-| Bloqueio do Place order (Pix) | ✅ | ❌ storefront sem testes | ✅ | Validado em E2E |
-| Webhook: assinatura, `GET /v1/orders`, correlação exata | ✅ | ✅ | ✅ webhooks reais de 2026-09-27 (#83, correlação) e 2026-09-29 (#92, ponta a ponta) | ✅ Webhook real pós-hardening validado |
-| Webhook: notificação duplicada/tardia de cart já completo | ✅ | ✅ | ✅ #80 | Validado |
-| Webhook: Order paga de outra cobrança não atinge a session | ✅ | ✅ | ✅ teste negativo com Order sandbox `APRO` | Validado |
-| Cartão (crédito) | ✅ `payment_type_id = credit_card` | parcial² | ✅ #79 (antes), #80 (regressão após a correção) | Validado (2026-09-27) |
-| Cartão (débito) | ✅ `payment_type_id = debit_card` → `type: debit_card` (ADR-005) | ✅ | ⚠ inviável no sandbox: o único débito de teste oficial é classificado como `prepaid_card` | Corrigido; E2E de débito não validável no sandbox atual |
-| `refundPayment` | ✅ `0821822` ([INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md), [ADR-011](decisions/ADR-011-mercadopago-refund-contract.md)) | ✅ `RF` | ✅ sandbox 2026-09-29: total cartão #85, parcial cartão #80, total Pix #92, dois parciais Pix #91; regressão 2026-09-30 depois de `6f5acdd`: parcial cartão #119, total Pix #128 | Validado no sandbox |
-| `cancelPayment` | existe no código | ✅ `CP` | ⚠ não é E2E do core: comportamento do provider aprovado por chamada direta no sandbox em 2026-09-30, numa Order de cartão com captura manual ([evidência](#cancelpayment-do-cartão-2026-09-30)); caminho core → `cancelPayment` não observado | Provider aprovado por chamada direta; o checkout não cria Order cancelável |
-| `retrievePayment` | existe no código | ❌ | — | Não validado |
-| `getPaymentStatus` | existe no código | ❌ | — | Não validado |
+| Pix preparado na Review, QR / copia e cola | ✅ | ✅ | ✅ #146, #147 (API, sem UI) | [E2E-SANDBOX-2026-09-27](investigations/E2E-SANDBOX-2026-09-27.md) |
+| A — Pix pendente → Place order | ✅ | ✅ #75, #78 (antes); #81, #82, #84, #86 (depois) | ✅ #147 | idem |
+| B — Place order → webhook depois | ✅ | ✅ #76 (antes); ⚠ depois: não reproduzido | ⚠ | [E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md) |
+| B' — webhook (pago) → Review → Place order | ✅ | ✅ #91 | ⚠ | [E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md) |
+| C — Pix pago → webhook → aba fechada | parcial¹ | ✅ #77 (antes); ✅ #83, #92 (depois) | ✅ #146 | [E2E-SANDBOX-2026-09-27](investigations/E2E-SANDBOX-2026-09-27.md#webhook-real-depois-do-hardening-2026-09-27-código-3a56150), [E2E-B](investigations/E2E-B-2026-09-29.md) |
+| Bloqueio do Place order (Pix) | ❌ storefront sem testes | ✅ | ⚠ | [E2E-SANDBOX-2026-09-27](investigations/E2E-SANDBOX-2026-09-27.md) |
+| Webhook: assinatura, `GET /v1/orders`, correlação exata, duplicada/tardia, Order de outra cobrança | ✅ | ✅ #80, #83, #92, teste negativo | ✅ #145–#147, sem o teste negativo | [E2E-SANDBOX-2026-09-27](investigations/E2E-SANDBOX-2026-09-27.md#webhook-real-depois-do-hardening-2026-09-27-código-3a56150) |
+| Cartão (crédito) | parcial² | ✅ #79, #80 | ✅ #145 | [INV-001](investigations/INV-001-debit-card-sent-as-credit-card.md) |
+| Cartão (débito) | ✅ | ⚠ inviável no sandbox (débito de teste classificado como `prepaid_card`) | — | [INV-001](investigations/INV-001-debit-card-sent-as-credit-card.md) |
+| Tentativa de cartão ambígua (INV-009) | ✅ | ✅ cenários 1, 2, 3, 7, 8, 9, H7 | ⚠ só o caminho feliz (#145, `resolved`) | [INV-009](investigations/INV-009-card-ambiguous-order-reconciliation.md) |
+| Tentativa depois do prazo (ADR-016) | ✅ | ✅ 1, 1b, 2a, 2b (#132, #136) | ⚠ | [E2E-CARD-ATTEMPT-DEADLINE-2026-09-30](investigations/E2E-CARD-ATTEMPT-DEADLINE-2026-09-30.md) |
+| `refundPayment` | ✅ | ✅ #80, #85, #91, #92; regressão #119, #128 | ✅ total #145 (pelo cancelamento); parcial ⚠ | [INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md), [INV-009](investigations/INV-009-card-ambiguous-order-reconciliation.md) |
+| Cancelamento de pedido (Admin) | ✅ | ✅ #94–#101; regressão #124 | ✅ #145, #147 | [INV-005](investigations/INV-005-cancel-order-with-pending-pix.md), [INV-006](investigations/INV-006-payment-collection-rollback.md) |
+| `cancelPayment` (cartão) | ✅ `CP` | ⚠ só chamada direta ao provider; caminho core → `cancelPayment` não observado | ⚠ | [E2E-CANCEL-PAYMENT-2026-09-30](investigations/E2E-CANCEL-PAYMENT-2026-09-30.md) |
+| Capability de pagamento (ADR-007) | ✅ | ✅ #87, #88, navegador | ⚠ | [E2E-SANDBOX-2026-09-27](investigations/E2E-SANDBOX-2026-09-27.md#capability-de-pagamento-adr-007) |
+| Redação da Store API (ADR-006) | ✅ | ✅ 2026-09-27 | ✅ com a nova política de campos | [E2E-SANDBOX-2026-09-27](investigations/E2E-SANDBOX-2026-09-27.md#store-api-antes-e-depois-do-adr-006-2026-09-27) |
+| `retrievePayment`, `getPaymentStatus` | ❌ | — | — | — |
 
-¹ Os testes cobrem a emissão do evento pelo webhook para a session correta. Completar o carrinho sem o navegador é do core do Medusa e só está coberto pelo E2E.
+¹ Os testes cobrem a emissão do evento pelo webhook para a session correta. Completar o cart sem o navegador é do core e só está coberto pelo E2E.
 ² `authorizePayment` no caminho de cartão tem testes; `initiatePayment` e a integração com o Brick, não.
 
-## Evidência E2E
+## Pendências abertas
 
-### Pix
-
-Fonte: execução real relatada pelo responsável, antes de `0326748` [decisão humana 2026-09-27].
-
-```text
-A  — Pix pendente → Place order                          ✅ #75  ✅ #78
-     cobrança Pix existente reutilizada; nenhuma segunda cobrança; Order Medusa criada
-B  — Place order → webhook depois                        ✅ #76
-B' — webhook (pago) → permanece na Review → Place order  ⚠ não validado isoladamente
-C  — Pix pago → webhook → cliente fecha a aba            ✅ #77
-     sem clicar Place order; o Medusa criou a Order
-Bloqueio do Place order
-     bloqueado com a cobrança em processing              ✅
-     habilitado com a cobrança pending + QR disponível   ✅
-```
-
-**B' é diferente de C.** Nesse registro (antes do hardening) B' não foi validado isoladamente. O primeiro E2E isolado de B' é o de 2026-09-29 ([abaixo](#e2e-b-depois-do-adr-010-2026-09-29-a4aae37--adr-010-não-commitado)).
-
-### Webhook real depois do hardening (2026-09-27, código `3a56150`)
-
-Fonte: notificações reais do Mercado Pago (sandbox, `live_mode=false`) observadas no inspetor do túnel e no log do backend, `GET /v1/orders/{id}` com o access token de teste e consultas read-only [banco 2026-09-27]. Todas as notificações tinham `x-signature` e `type=order`, e nenhuma recebeu 401.
-
-```text
-C  — cart de 2026-09-25, Pix já pago, completado só pelo webhook         ✅ #83
-     notificação  order.processed · data.id = Order MP do cart · x-request-id cb2fc86b-…
-     Order MP     processed/accredited · payment processed/accredited · pix/bank_transfer · R$ 135,00
-                  external_reference = cart_01M3BHMWYZ1S8CGGJ6B6W5XX07
-     session      payses_01M3BHNCDYHRY1CY983X68Q5M4 — única session do cart; mercadopago_order_id == data.id
-                  pending → authorized
-     Payment      pay_01M3HQ06QS1KKVEFJ1BSB62XS8 · R$ 135 · capture capt_01M3HQ06THK5SVJ1PDZ070VHWE
-     Order Medusa order_01M3HQ07RP9GWZ9B9TS40Q2MEX (#83) · cart completed_at 15:16:11Z
-     sem chamada a /store/carts/:id/complete para esse cart; Payments 32 → 33 (só este)
-     O pagamento foi feito em 2026-09-25 08:14Z; a notificação só chegou em 2026-09-27 (túnel fora do ar no intervalo).
-
-Duplicada/tardia — order.processed da Order MP da #80 (cartão), cart já completo   ✅
-     200 · session exata encontrada · evento processado · nenhum Payment, Capture ou Order novos
-
-Negativa — Order MP "A" criada via API no sandbox (payer.first_name APRO), mesmo
-     external_reference e valor de um cart aberto cuja session guarda a Order "B"   ✅
-     order.action_required → 200 "not held by any payment session", sem processar
-     order.processed       → 503 "paid order … has no payment session holding it" (MP reenvia)
-     session/cart/payment collection do cart idênticos antes e depois; nenhum Payment novo
-
-Criação de Pix (order.action_required) × 4 carts novos                           ✅
-     200 · session exata · session continua pending · cart não completado
-```
-
-As Orders Mercado Pago das #81, #82 e #84 (cenário A) nunca foram pagas: antes do ADR-010, o Pix criado pelo checkout não era aprovável no sandbox ([testing.md](mercadopago/testing.md#pix-no-sandbox)). A Order "A" do teste negativo é uma cobrança sandbox paga e sem session, criada de propósito.
-
-### Aprovação de Pix no sandbox (INV-003, 2026-09-29, código `a4aae37`)
-
-Fonte: [INV-003](investigations/INV-003-pix-sandbox-approval.md). Uma única Order criada direto na Orders API sandbox, sem nada no Medusa e sem escrita no banco. Nenhum arquivo do projeto foi alterado.
-
-```text
-corpo real do createPixOrder + payer.first_name "APRO"   → HTTP 201, external_reference preservado   ✅
-action_required/waiting_transfer → processed/accredited   automático, ≤ ~3,8 s (timestamps do Mercado Pago)   ✅
-webhook da aprovação                                      backend/túnel desligados                    ⚠ não comprovado
-```
-
-A Order de teste (`ORDTST01M3PGG6E3JDZAMFAHE2ZNN0GV`) está paga e não pertence a nenhum cart. Se uma notificação dela chegar a um backend ligado, a resposta esperada é 503, e o Mercado Pago tende a reenviar (invariante 20). ⚠ Nenhuma notificação dela chegou em ~45 min com o túnel ligado, nos E2E B' e B: **não comprovado** ([E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md#order-órfã-da-inv-003)). O 503 continua não comprovado para ela.
-
-### E2E B' depois do ADR-010 (2026-09-29, `a4aae37` + ADR-010 não commitado)
-
-Fonte e evidências completas: [E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md). Resultado: **CONFIRMADO**, 15 de 15 critérios. A primeira classificação foi PARCIAL, porque o critério 11 original ("session `captured`") estava errado; ele foi substituído [decisão humana 2026-09-29]. Session `authorized` com Payment capturado é o comportamento do Medusa 2.20.1 ([webhook.md](mercadopago/webhook.md#processamento-no-provider)).
-
-```text
-billing APRO → session.data.payer (first_name/last_name) → prepare → Order MP     ✅  cart_01M3PPM9VWY5ZM7BVNXHBW9HTK
-Order MP action_required/waiting_transfer → processed/accredited (~93 s)         ✅  ORDTST01M3PPT9WBAF8EGKDS7P6GHEWN
-order.action_required · order.processed — x-signature, HMAC, correlação exata, 200   ✅  sem retry
-session pending → authorized · 1 Payment capturado · 1 Capture · collection completed   ✅  [banco 2026-09-29]
-webhook concluiu o cart → pedido #91; Place order depois: 200, nada novo criado   ✅
-Review "Payment approved" sem QR · confirmação "We received your Pix payment"     ✅  [decisão humana 2026-09-29]
-```
-
-Observação, não bug: o tempo de aprovação com `APRO` variou (~3,8 s na INV-003, ~93 s aqui, ~3,5 s no [E2E B](investigations/E2E-B-2026-09-29.md#tempo-de-aprovação-com-apro)); a causa não foi determinada.
-
-### E2E B depois do ADR-010 (2026-09-29): NÃO REPRODUZIDO
-
-Fonte: [E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md).
-
-```text
-billing APRO → session.data.payer → prepare → Order MP action_required           ✅  cart_01M3PS2ZAWVZYQ423NTNMV2RJE
-Order MP → processed/accredited em ~3,5 s                                        ✅  ORDTST01M3PS7RD34MPPRDQ0TQBZ7RFV
-order.action_required · order.processed — x-signature, correlação exata, 200     ✅  sem retry
-webhook concluiu o cart → pedido #92 antes de qualquer Place order               ✅  sem POST /complete
-session authorized · 1 Payment captured_at · 1 Capture · collection completed    ✅  [banco 2026-09-29]
-Place order com a Order ainda pendente (B)                                       —   não reproduzido
-```
-
-### Cartão
-
-Executado em 2026-09-27, com evidências completas na [INV-001](investigations/INV-001-debit-card-sent-as-credit-card.md#5-evidência-e2e-sandbox-2026-09-27).
-
-```text
-Crédito (Visa)  — Brick → session → authorizePayment (type credit_card) → MP processed/accredited → Order #79   ✅
-Débito          — o cartão oficial "Elo Débito" é classificado como prepaid_card e o Brick o recusa antes do onSubmit   ❌
-                  Orders API: debelo + credit_card → 400 (validação de esquema); debelo + debit_card → 400 not_allowed_for_collector
-```
-
-Runtime do Brick: `paymentType`, `selectedPaymentMethod` e `additionalData.paymentTypeId` = `"credit_card"` (snake_case; os tipos do `sdk-react` 1.0.7 dizem `'creditCard'`).
-
-### Regressão depois do ADR-006 (2026-09-27)
-
-```text
-Cartão (guest, crédito) — Brick → session → Place order → authorizePayment → Order #85   ✅
-     session authorized · credit_card/visa · Payment capturado · webhook 200
-     card_token e payer continuam em session.data e payment.data [banco 2026-09-27]
-     GET /store/carts/:id desse cart → data: { payment_method_id }
-Pix (guest) — Review detecta Pix e mostra o QR                                   ✅
-     cart_01M3HSEWDKY0BJV5P2TPFHQ3CG · QR exibido na tela [decisão humana 2026-09-27]
-     log: POST .../payment-sessions/:id/pix (prepare) e polling GET /store/mercadopago/carts/:id/pix,
-          só chamados pelo PixPaymentPanel, que a Review só mostra com data.payment_method_id === "pix"
-     session pending, payment_method_id pix; payer e QR continuam em session.data [banco 2026-09-27]
-     GET /store/carts/:id → data: { payment_method_id } · DTO Pix do cart com QR/ticket/status
-Pix — Place order depois da correção (cenário A)                                 ✅ #86
-     mesmo cart: item removido → session apagada e cobrança Pix cancelada (deletePayment) →
-     webhook order.canceled 200 "not held" → nova session Pix → nova cobrança → Place order
-     session pending_authorization com a cobrança nova; 0 Payments; página do pedido leu o DTO Pix
-```
-
-### `cancelPayment` do cartão (2026-09-30)
-
-Fonte: script `medusa exec` fora do repositório, código em `6f5acdd` [sandbox 2026-09-30] [banco 2026-09-30]. É separado do cancelamento do pedido (INV-006): aqui foi chamado **só o método `cancelPayment` do provider**, pelo mesmo ponto que o core usa (`paymentProviderService_.cancelPayment("pp_mercadopago", { data, context })`, chamado por `paymentModule.cancelPayment` e pelo fallback de `authorizePaymentSession`).
-
-- **Operação cancelável:** o checkout nunca cria uma Order de cartão cancelável. A Order do #124, criada pelo provider, tem `capture_mode: automatic_async` e já nasce `processed`. A documentação oficial só permite cancelar Orders ainda não processadas (reserva com `capture_mode: "manual"`, `action_required/waiting_capture`) [MCP 2026-09-30]. Por isso a Order foi criada direto na API: `ORDTST01M3SFB4YQ442PWF8PZHNKH0WR`, Visa `APRO`, R$ 50, `capture_mode: manual`, `external_reference` sem cart. Ela nasceu `action_required/waiting_capture`.
-- **Entrada:** `data` no formato de `payment.data`, com `mercadopago_order_id` e `mercadopago_idempotency_key` (a key base). Num pagamento real, essa key é o ID da session: conferido no #127. `context.idempotency_key` recebeu um ID de payment, como faz `paymentModule.cancelPayment`.
-- **Operação enviada:** `POST /v1/orders/{id}/cancel`, sem body → **200 `canceled/canceled`**.
-- **Idempotency key:** exatamente `data.mercadopago_idempotency_key`, a key base, **sem derivação**. `context.idempotency_key` foi ignorada.
-- **Repetição com a mesma entrada:** o mesmo `POST` com a mesma key → 200 `canceled/canceled`. Nenhum segundo cancelamento.
-- **Mercado Pago:** Order `canceled/canceled`, payment `canceled/canceled_transaction`, nenhuma captura, nenhum reembolso.
-- **Medusa:** nenhum `payment`, `payment_session` ou `mercadopago_card_attempt` referencia a Order. A chamada direta não persiste nada (quem grava `canceled_at` é `paymentModule.cancelPayment`, que não foi usado porque não há Payment de cartão não capturado).
-- **Limite:** o caminho real do core até o `cancelPayment` do cartão não foi exercitado. O `cancelPaymentStep` do `cancelOrderWorkflow` só recebe Payments não capturados, e o cartão é sempre capturado na autorização. O fallback de `authorizePaymentSession` só roda depois de uma autorização bem-sucedida seguida de falha na gravação, e aí a Order já está `processed` (não cancelável) [core 2.20.1].
-
-## Comportamentos validados
-
-- **Pix em `pending_authorization` é suportado pelo fluxo do Medusa 2.20.1.** O `complete-cart` e o `authorize-payment-session` do `@medusajs/core-flows` 2.20.1 instalado tratam esse status. Na prática, o cenário A mostrou o pedido sendo criado com o Pix pendente.
-- **Pagamento assíncrono completa o carrinho sem o navegador**, pelo mecanismo nativo `processPaymentWorkflow` → `completeCartAfterPaymentStep` → `completeCartWorkflow`. Os três existem no `@medusajs/core-flows` 2.20.1 instalado, e o cenário C comprovou o fluxo de ponta a ponta.
-- **Hardening do webhook** (`0326748`): a correlação passou a ser `data.id` → `GET /v1/orders/{data.id}` → `mercadopago_order_id` → Payment Session exata → cart → evento → `processPaymentWorkflow`. ✅ Correlação validada por teste unitário. ✅ Correlação validada por webhook real (2026-09-27, [evidência](#webhook-real-depois-do-hardening-2026-09-27-código-3a56150)).
-- Migração de identidade do provider concluída [banco 2026-09-25] (resultado em [runbooks/provider-id-migration.md](runbooks/provider-id-migration.md)).
-- Em 2026-09-27, no commit `3a56150`: 141 testes unitários passando (6 suítes); `tsc --noEmit` limpo no backend e no storefront; `medusa build` e `next build` passando.
-- Em 2026-09-27, com a correção do ADR-006: 157 testes (7 suítes), `tsc` nos dois apps, `medusa build`, `next build` e `git diff --check` passando. O lint do backend mostra os mesmos 2 warnings de antes.
-- Lint, executado pela primeira vez em 2026-09-27, sem baseline anterior: no backend, 0 erros e 2 warnings (`updatePaymentSession` chamado direto em rota; ver dívida "lógica fora de workflows"); no storefront, 12 erros e 3 warnings, todos em código que não foi alterado nesta etapa (`no-explicit-any`, `no-unused-vars`, `ban-ts-comment`, `exhaustive-deps`). Não corrigidos.
-
-## Pendências funcionais (por prioridade)
-
-Nenhuma delas deve virar alteração de código sem passar pelo fluxo de investigação ([investigations/README.md](investigations/README.md)).
+Nenhuma vira alteração de código sem passar pelo fluxo de investigação ([investigations/README.md](investigations/README.md)).
 
 ### Alta
 
-1. **[INV-001](investigations/INV-001-debit-card-sent-as-credit-card.md)**: débito enviado como `credit_card`.
-   - ✅ causa confirmada;
-   - ✅ correção implementada, [ADR-005](decisions/ADR-005-card-payment-type-from-brick.md), commit `3a56150`;
-   - ✅ crédito validado, com regressão E2E #80;
-   - ⚠ débito não validável no sandbox atual.
-   - Sessions de cartão antigas, sem `payment_type_id`, são recusadas com erro controlado e exigem novo preenchimento.
-2. ✅ ~~E2E real de cartão~~: crédito validado (#79); débito coberto pela INV-001.
-3. ✅ **Webhook real pós-hardening validado** [decisão humana 2026-09-29: consolidado a partir das evidências abaixo, sem novo E2E].
-   - ✅ **#83 (2026-09-27): evidência da correlação depois do hardening.** `order.processed` real, `x-signature` válida, 200; `data.id` = `mercadopago_order_id` da única session do cart; Payment capturado e Order Medusa criados sem `POST /store/carts/:id/complete` ([detalhes](#webhook-real-depois-do-hardening-2026-09-27-código-3a56150)).
-   - ✅ **Mesmo período (2026-09-27):** notificação duplicada/tardia (Order MP do pedido #80, cartão, cart já completo) sem Payment, Capture ou Order novos; correlação negativa: Order A paga não atingiu a session que guarda a Order B (503 sem processar).
-   - ✅ **#92 (2026-09-29): evidência de ponta a ponta do fluxo assíncrono.** Pix criado pelo checkout, aprovado automaticamente no sandbox (`APRO`), webhook antes de qualquer Place order: `processPaymentWorkflow` → `completeCartAfterPaymentStep` → `completeCartWorkflow`; 1 Payment capturado, 1 Capture, collection `completed`, 1 Order Medusa, sem `POST /complete` ([E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md)).
-   - ⚠ `notifications_history` do MCP do Mercado Pago: voltou vazio em 2026-09-29 mesmo depois de webhooks reais entregues, mas mais tarde, no mesmo dia, com o MCP conectado à conta de teste [decisão humana 2026-09-29], ele mostrou notificações reais das Orders de teste (#97–#101: horário, tentativas e código HTTP da resposta) [MCP 2026-09-29] ([INV-006](investigations/INV-006-payment-collection-rollback.md)). Limites: trunca o ID da Order e não mostra o `action` nem o corpo, então não prova sozinho qual evento chegou a qual Order; a evidência de processamento continua sendo o registro dos testes reais do projeto.
-   - Os cenários B' e B, abaixo, testam a ordem entre Place order e webhook, não a correlação. B' foi confirmado e **B** não foi reproduzido; B continua pendente. Os dois precisam de um Pix criado pelo checkout e pago no sandbox, o que o ADR-010 tornou possível ([testing.md](mercadopago/testing.md#pix-no-sandbox)).
-   - ✅ Causa confirmada pela [INV-003](investigations/INV-003-pix-sandbox-approval.md) (concluída em 2026-09-29): o sandbox aprova automaticamente com `payer.first_name = "APRO"`, e o checkout não envia esse campo.
-   - ✅ [ADR-010](decisions/ADR-010-pix-payer-name-from-billing-address.md) implementado em 2026-09-29 e commitado em `fb5d9a0` [commit `fb5d9a0`]. Para sessions Pix, o `payer` passa a levar `first_name`/`last_name` do `billing_address` do cart, lidos no servidor pela rota de update e persistidos em `session.data.payer` (invariantes 40 e 41). Mudou só `payment-sessions/[id]/route.ts`. Backend: 12 suítes, 263 testes, `tsc` limpo, lint com 0 erros e os mesmos 2 warnings.
-   - ✅ E2E B' executado em 2026-09-29, resultado **CONFIRMADO** ([E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md)). Comprovado:
-     - o nome de cobrança chegou a `session.data.payer`;
-     - o webhook `order.processed` real chegou, com correlação exata e 200;
-     - session `authorized` (estado esperado), exatamente 1 Payment com `captured_at`, 1 Capture e collection `completed`;
-     - a Review e a confirmação mostraram "Payment approved".
-   - ⚠ Pendente: cenário **B**. NÃO REPRODUZIDO em 2026-09-29 ([E2E-B-2026-09-29](investigations/E2E-B-2026-09-29.md)): a aprovação em ~3,5 s não deu tempo de clicar Place order antes dela. Só é viável pelo navegador com uma aprovação lenta do sandbox, que não é controlável.
-   - ⚠ Pendente: webhook da Order órfã da INV-003. **Não comprovado**: nenhuma notificação observada em ~45 min, e o `notifications_history` do MCP não serve como evidência.
-   - Observação, não bug: o tempo de aprovação com `APRO` varia (~3,8 s, ~93 s, ~3,5 s); a causa não foi determinada.
+Nenhuma.
 
 ### Média
 
-- ✅ **Cancelar pedido Medusa com Pix pendente** ([INV-005](investigations/INV-005-cancel-order-with-pending-pix.md), concluída; [ADR-012](decisions/ADR-012-cancel-pending-pix-on-order-cancel.md); publicada em `12c5ff6`).
-  - Reprodução (#93, 2026-09-29): `cancelOrderWorkflow` cancelou pedido e collection sem chamar o Mercado Pago; a Order MP continuou `action_required/waiting_transfer`, e a confirmação continuou entregando QR para o pedido cancelado.
-  - Correção: hook `cancelOrderWorkflow.hooks.orderCanceled` → ação `cancel` do provider → `invalidatePixOrder` (invariante 45). Backend: 15 suítes, 310 testes; `tsc` nos dois apps, `medusa build`, `next build`; lint com os mesmos 2 warnings.
-  - E2E sandbox (2026-09-29): #94 Pix pendente → Order MP `canceled`, pedido `canceled`, confirmação `canceled` sem QR ✅; #95 Pix pago antes do webhook → cancelamento recusado e revertido, pedido `pending` ✅; #96 Payment capturado → reembolso pelo core, hook sem ação ✅.
-  - ⚠ Compensação do core 2.20.1: a compensation de `updatePaymentCollectionStep` falha (snapshot só com `{ id, status }`; `amount`/`currency_code` `undefined` recusados pelo MikroORM), o workflow termina `FAILED`, o pedido volta a `pending` e a payment collection fica `canceled`. No #95 (Pix pago) o primeiro evento de pagamento recalculou a collection. Investigação: [INV-006](investigations/INV-006-payment-collection-rollback.md). O defeito do core não foi corrigido; a rota do Admin deixou de chegar a ele no caso do Pix ([ADR-013](decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)).
-- ✅ **[INV-006](investigations/INV-006-payment-collection-rollback.md): rollback do `cancelOrderWorkflow` deixava a collection `canceled`** (concluída; [ADR-013](decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md); publicada em `12c5ff6`).
-  - Reprodução com Pix não pago (#97, falha controlada no `GET` da Order MP): workflow `failed`, erro de `invoke` no hook e de `compensate` em `update-payment-collection`; pedido `pending`; collection `awaiting` → `canceled`; `payment_status: canceled`; Pix ainda pagável [banco 2026-09-29]. `order.canceled` é descartado no rollback.
-  - Correção: `POST /admin/orders/:id/cancel` (rota sobrescrita) executa `cancel-order-with-pending-pix`: `cancelValidateOrder` → step `cancel-pending-pix-charge` (mesma ação `cancel` do provider) → `cancelOrderWorkflow.runAsStep`. O hook fica como rede de segurança (invariantes 45 e 46).
-  - Backend: 18 suítes, 336 testes; `tsc` nos dois apps; `medusa build` e `next build`; lint do backend com 0 erros e os mesmos 2 warnings.
-  - E2E sandbox pela rota real (2026-09-29):
-    - #98 Pix pendente → tudo `canceled`, Pix cancelado antes do core ✅;
-    - #99 Pix pago antes do webhook → 400, core não executado, collection `awaiting` ✅;
-    - #100 `GET` 403 → 500, collection `awaiting`, `payment_status: awaiting` ✅, e nova tentativa concluída ✅;
-    - #101 cartão capturado → só o reembolso do core ✅.
-    - Nenhuma chamada duplicada ao Mercado Pago.
-  - #97 e #99 deixados como estão (dados de teste).
-
-4. ✅ **`GET /store/mercadopago/orders/:id/pix`: resposta reduzida ao mínimo; depois substituída pela capability e removida ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md))** (commit `fix(api): minimize Mercado Pago Pix order response`; invariante 14).
-   - `:id` é o **ID da Order Medusa** (não o da Order Mercado Pago). A rota é usada só pela página de confirmação (`PaymentDetails` em `order-completed-template.tsx`), que também atende guest checkout.
-   - **Antes:** devolvia `status`, `qr_code`, `qr_code_base64`, `ticket_url` e `expires_at` da primeira session `pp_mercadopago` do pedido, sem checar se era Pix, para quem conhecesse o ID.
-   - **Depois:** só `status` e `ticket_url`, e só para uma session Pix; pedido de cartão → 404. A página do pedido trata qualquer resposta não 404 como Pix. Acesso inalterado, conforme a decisão de não exigir autenticação [decisão humana 2026-09-27].
-   - ✅ Testes unitários (`OX`, 10 testes; 162 no total), `tsc` nos dois apps. ⚠ Página do pedido não reexecutada em E2E depois da mudança.
-5. ✅ **`PaymentButton` escolhe o botão por `payment_sessions[0]`** ([INV-007](investigations/INV-007-payment-button-first-session.md), concluída em 2026-09-29, sem bug). A ordem não é garantida, mas o `createPaymentSessionsWorkflow` do Medusa 2.20.1 apaga as sessions anteriores ao criar uma nova, então `[0]` é a única session; 106 de 106 collections com uma session [banco 2026-09-29]. ⚠ Corrida entre inicializações concorrentes [não validado]; se ocorrer, é do core (`completeCartWorkflow` também usa `[0]`).
+1. ⚠ **Artefato residual da INV-009**: a tentativa `mpca_01M3S6S85G125GT437C94NZMEC` continua `unknown`, com a MP Order paga e sem pedido Medusa. Pelo ADR-016, o prazo não muda o estado; um Place order ou uma reentrega do webhook a resolve ([pendência](investigations/INV-009-card-ambiguous-order-reconciliation.md#dados-criados-e-pendência)). Outras tentativas de teste: [E2E-CARD-ATTEMPT-DEADLINE](investigations/E2E-CARD-ATTEMPT-DEADLINE-2026-09-30.md).
+2. ⚠ **ADR-016, itens não validados ou não implementados** ([seção 11](decisions/ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md#11-decisões-desta-revisão-e-pendências)):
+   - corrida webhook × resolução depois do prazo: cobertura só unitária;
+   - liberação por `total = 0` desligada enquanto `H = null` (→ `card_attempt_manual_review`); fixar `H` exige a validação read-only da busca no sandbox, com autorização;
+   - sem limpeza periódica do ciphertext de tentativas abandonadas;
+   - o storefront ainda não trata os códigos do contrato ([seção 4.6](decisions/ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md#46-contrato-mínimo-com-o-storefront));
+   - sem teste unitário de `deletePayment` com tentativa `failed`, nem do ramo em que uma tentativa `submitted` passa do prazo durante o Place order.
+3. ⚠ **`card_token` antigo em claro**: 38 `payment_session`, 33 `payment` e 13 execuções `complete-cart` do `workflow_execution` (retidas por 3 dias) [banco 2026-09-30, só contagens]. Sessions novas não guardam o token (ADR-015). A remoção exige autorização.
+4. ⚠ **INV-009, hipóteses H2, H3 e H4 não validadas** (retenção da idempotência, replay concorrente, token consumido) ([hipóteses](investigations/INV-009-card-ambiguous-order-reconciliation.md#perguntas-em-aberto-exigem-teste-ou-decisão)). O cenário 6 (job de reconciliação/alerta) não tem E2E: o job não existe.
+5. ⚠ **Pix, cenário B depois do hardening**: não reproduzido; a aprovação do sandbox é rápida demais para clicar em Place order antes dela ([E2E-B](investigations/E2E-B-2026-09-29.md)).
+6. ⚠ **Webhook da Order órfã da INV-003**: não comprovado ([E2E-B](investigations/E2E-B-2026-09-29.md#order-órfã-da-inv-003)).
+7. ⚠ **`cancelPayment`: caminho core → provider não observado.** O checkout não cria uma Order de cartão cancelável. É lacuna de cobertura, não defeito conhecido ([E2E-CANCEL-PAYMENT](investigations/E2E-CANCEL-PAYMENT-2026-09-30.md)).
 
 ### Baixa
 
-6. 🔍 **Status desconhecido: cartão × Pix.** No cartão, status desconhecido vira `pending` (`getStatusFromGateway`); no Pix, lança erro (`resolvePixStatus`). É uma inconsistência de comportamento conhecida, **não demonstrada como bug**. Sem correção sugerida.
-7. ✅ **Idempotency key do cartão estável durante a session: corrigida** ([INV-008](investigations/INV-008-card-idempotency-key-per-session.md), concluída; [ADR-014](decisions/ADR-014-card-order-idempotency-key-from-body.md), aceito; publicada em `fb6753e` [commit `fb6753e`]). Defeito confirmado em sandbox: `402` → session `pending` com a mesma key → novo cartão → `409 idempotency_key_already_used`. Correção: a key da Order de cartão passa a ser `sha256(<base>:card:<sha256(body canônico)>)` (invariante 47), com a base preservada; Pix e reembolso inalterados. Backend: 18 suítes, 350 testes, `tsc`, lint com os mesmos 2 warnings. Regressão sandbox (2026-09-29): `OTHE` 402 → mesmo request 402 com o mesmo payment (idempotente) → Visa `APRO` com token novo, chave nova → 201 `processed/accredited`, Payment capturado, pedido `order_01M3QV46MG12TSSQCYWSP3RS5F`. ⚠ Mastercard de teste tokenizado pelo access token → 422 também numa primeira tentativa (limitação do sandbox, não investigada). Regressão do caminho Pix (#111, 2026-09-29): criação 201, chave do Pix igual à fórmula anterior, 0 chamadas à derivação do cartão, `processed/accredited`, 1 Payment capturado, 1 Capture, collection `completed`, pedido #111, sem duplicação. O webhook de #111 não foi observado (sem túnel ativo no ambiente; limitação do ambiente, não reabre nenhuma investigação). ⚠ Limitação conhecida: a key garante a idempotência da mesma operação, não reconciliação; depois de um timeout ambíguo, um cartão novo pode gerar uma segunda cobrança (ADR-014; sem reconciliação automática). 🔍 Investigação aberta: [INV-009](investigations/INV-009-card-ambiguous-order-reconciliation.md) (2026-09-29, commit `77ab03a`). Não há lookup por idempotency key; `external_reference` (`cart_id`) não é único. O replay com a mesma chave e o mesmo body resolve a ambiguidade, mas só enquanto o body não muda, e hoje o reenvio do Brick o substitui. Conclusão: é preciso um estado novo que congele a tentativa até o replay. Arquitetura proposta: session `pending` + tentativa em `session.data`, `external_reference = <cart_id>-<attempt_id>`, webhook como caminho principal, replay e job só de leitura. `pending_authorization` foi avaliado e descartado para esse caso. E2E [sandbox 2026-09-29]:
-   - **H1 confirmada:** replay com a mesma chave e o mesmo body → mesma Order `ORDTST01M3R110VCXBZXEPWPGXYXD33A` e mesmo payment, sem segunda cobrança;
-   - **H7 parcialmente confirmada:** valor de 58 caracteres intacto no `GET`; nenhuma notificação chegou ao backend (sem túnel). Webhook aprovado depois, em 2026-09-30 (ver o início deste documento);
-   - achado: o `402` da INV-008 deixou uma Order `failed` (`ORDTST01M3QV48R03YE7617AMDQ270S7`).
+8. ⚠ Cartão de débito não validável no sandbox ([INV-001](investigations/INV-001-debit-card-sent-as-credit-card.md)).
+9. 🔍 Status desconhecido: no cartão vira `pending` (`getStatusFromGateway`); no Pix lança erro (`resolvePixStatus`). Inconsistência conhecida, não demonstrada como bug; sem correção sugerida.
+10. ⚠ `retrievePayment` e `getPaymentStatus` sem testes e sem E2E, inclusive num Payment anterior à migração de identidade.
+11. ⚠ Mercado Pago disponível no Admin para a região Brasil: no banco, a região aponta para `pp_mercadopago` [banco 2026-09-25]; no Admin, não verificado.
+12. ⚠ Reembolso: não observados `processing`/`failed` e recusa do Mercado Pago. A entrega do webhook depois de um reembolso foi observada no 2.21.2 (200, nada criado; [INV-010](investigations/INV-010-medusa-2-21-2-upgrade.md#observações-diferenças-de-2201-e-dados-novos)). `payment.data` não reflete o reembolso, sem bug ([INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md#semântica-de-paymentdata-depois-do-reembolso)).
+13. ⚠ `PaymentButton` usa `payment_sessions[0]`: sem bug ([INV-007](investigations/INV-007-payment-button-first-session.md)); corrida entre inicializações concorrentes [não validado].
+14. ⚠ Pix: `carts/:id/pix` com 410 e DTO reduzido (invariantes 14 e 26) não reexecutado em E2E; a Review depois da deadline local (ADR-008) não foi observada.
+15. ⚠ Caminhos sem evidência no 2.21.2 (só no 2.20.1): tentativa ambígua e prazo do cartão, reembolso parcial, capability, cenário B, compensação com falha do cancelamento, `createPaymentSessionsWorkflow`, `GET /store/orders/:id` ([limites](investigations/INV-010-medusa-2-21-2-upgrade.md#limites)).
 
-   A Order de teste está paga e sem session (webhook esperado: 503).
+### Segurança e produto
 
-   ADR-015 (aceito em 2026-09-30; revisado em 2026-09-30) formaliza a decisão. Revisão de armazenamento: o `card_token` está hoje em claro em 38 `payment_session`, 33 `payment` e 13 execuções `complete-cart` do `workflow_execution` (retidas por 3 dias) [banco 2026-09-30, só contagens]. A tentativa passa para um módulo próprio, com o token cifrado (chave fora do banco) e destruído no estado terminal ou em 24 h. O provider registra o resultado no módulo e relança os erros, sem mudar a resposta da recusa. A remoção dos tokens antigos exige autorização. Implementado nas Fases 2–5 da INV-009, publicado em `6f5acdd` [commit `6f5acdd`]. Ponto separado: `cancelPayment` (cartão) usa a key base sem derivação, confirmado no sandbox em 2026-09-30 ([evidência](#cancelpayment-do-cartão-2026-09-30)).
-8. ✅ **`refundPayment`** ([INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md), concluída; [ADR-011](decisions/ADR-011-mercadopago-refund-contract.md)).
-   - ✅ E1 reproduzido por teste e corrigido: `refund.raw_amount` (`{ value, precision }`) virava `NaN` em `Number()`, e todo reembolso pedido pelo Medusa falhava antes de chamar o Mercado Pago.
-   - ✅ E2 reproduzido por teste e corrigido: todos os reembolsos de um Payment usavam a `mercadopago_idempotency_key` da session; agora cada um usa `context.idempotency_key` (`refund.id`).
-   - ✅ Total sem body × parcial com `transactions[{ id, amount }]`, conforme a documentação (invariante 44).
-   - Backend em 2026-09-29, com a correção: 13 suítes, 285 testes, `tsc` limpo, lint com 0 erros e os mesmos 2 warnings.
-   - ✅ E2E sandbox em 2026-09-29, pelo `refundPaymentWorkflow` do core (o mesmo da rota do Admin) via `medusa exec`, sem a camada HTTP/auth do Admin: total sem body (cartão #85, Pix #92), parcial com `transactions` (cartão #80, Pix #91 R$ 30 + R$ 80), key = `refund.id` em todos, HTTP 201, reembolsos `processed` na resposta e ~6 min depois. Guard do Medusa recusou reembolso acima do capturado sem chamar o Mercado Pago. Evidências na INV-004.
-   - ⚠ Semântica ambígua, sem bug (auditoria de 2026-09-29): depois do reembolso, `payment.data.mercadopago_payment_status`/`mercadopago_status_detail` continuam `processed/accredited` (a resposta do reembolso não traz `transactions.payments`), enquanto a transação no Mercado Pago passa a `refunded`/`partially_refunded`. Nenhum código, o core, o Admin ou o storefront lê esses campos em `payment.data`; o reembolso está representado por `Refund`, `OrderTransaction`, `refunded_amount` e `mercadopago_order_status`. Sem correção ([INV-004](investigations/INV-004-refund-payment-amount-and-idempotency.md#semântica-de-paymentdata-depois-do-reembolso)).
-   - ⚠ Não observado: reembolso em `processing`/`failed`, recusa do Mercado Pago, entrega dos webhooks de reembolso (backend e túnel desligados).
-9. ✅ `cancelPayment` com testes unitários (2026-09-30, sem commit; `cancel-payment.unit.spec.ts`, 9 testes; backend com 23 suítes e 524 testes, `tsc` limpo). A chave base crua só é enviada por ele (invariante 48), o que torna o reuso seguro; a premissa da H3 da INV-008 (mesma chave da criação) deixou de valer com o ADR-014. E2E sandbox em 2026-09-30 só pela chamada direta ao provider ([evidência](#cancelpayment-do-cartão-2026-09-30)); caminho core → `cancelPayment` não observado. Chamadores no core 2.20.1: `cancelOrderWorkflow` (só Payments não capturados), o fallback de `authorizePaymentSession` e a compensação do `authorizePaymentSessionStep` no `completeCartWorkflow` (erro só registrado em log).
-10. ⚠ `retrievePayment` sem testes e sem E2E.
-11. ⚠ `getPaymentStatus` sem testes e sem E2E.
-12. ⚠ `retrievePayment`/`getPaymentStatus` em um Payment anterior à migração de identidade.
-13. ⚠ Mercado Pago disponível no Admin para a região Brasil (no banco, a região aponta para `pp_mercadopago` [banco 2026-09-25]; no Admin, não verificado).
-14. 🛠 **Prazo da tentativa de cartão: decidido pelo [ADR-016](decisions/ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md) (aceito 2026-09-30) e implementado sem commit** (working tree sobre `e822f52`). O prazo não muda mais o estado; um Place order depois dele anula o ciphertext sem transição e resolve a tentativa ambígua pela busca da Order (só `GET`). Testes unitários: `S` e `CA` ([invariantes](mercadopago/invariants.md#tentativa-de-cartão-depois-do-prazo) 49–50).
-    - **E2E [sandbox 2026-09-30/2026-10-01]**, com túnel desligado e backdate autorizado só de `created_at` das tentativas de teste (Q de 30 min esperado em tempo real):
-      - **1, Order paga: aprovado.** Resposta do `POST` descartada → `unknown`; depois do prazo, busca exata + `GET`, **0 `POST`**, tentativa `resolved` com a mesma Order, token destruído, pedido #132 com 1 Payment e 1 Capture;
-      - **1b, webhook tardio: aprovado.** A reentrega da mesma Order (túnel religado, mesmo host) não criou Payment nem pedido novo;
-      - **2a, Order `failed`: aprovado.** Busca + `GET` (Order `failed/failed`), 0 `POST`, regra 9, token destruído; a Payment Session fica `error`;
-      - **2b, novo pagamento: aprovado.** `initiatePaymentSession` pela Store API (js-sdk do storefront) → session antiga `error` removida pelo core (`deletePayment` sem erro) → nova session `pending` → novo Brick → nova tentativa → 1 `POST` com chave e body novos → pedido #136 com 1 Payment e 1 Capture. A falha da primeira execução do 2b ("Payment sessions are required to complete cart") era do harness, que reutilizou a session `error`; resolvida com a nova Payment Session (ADR-016, seção 4.3).
-    - **Não validado em runtime:** corrida webhook × resolução depois do prazo (cobertura só unitária, pelo SQL e pelo fake; sem teste com a tabela real).
-    - **`total = 0` desligado** enquanto `H = null` (→ `card_attempt_manual_review`). Fixar `H` exige a validação read-only da busca no sandbox descrita no ADR-016 (consulta externa, com autorização).
-    - **Pendente:** limpeza periódica do ciphertext de tentativas abandonadas (decisão posterior de retenção, sem job); storefront ainda não trata os códigos do contrato (ADR-016, seção 4.6); lacunas de teste unitário: `deletePayment` com tentativa `failed`, e o ramo do provider em que uma `submitted` passa do prazo durante o Place order.
-    - **Dados de teste** [banco 2026-10-01]: carts dos E2E concluídos (#132, #136) ou abandonados; a tentativa `mpca_01M3T3VGSSAHGT3N0AWF58QXMJ` (primeira execução, túnel ligado) continua `unknown` com a Order associada pelo webhook; a `mpca_01M3T66855B5663NQM9XZEQCBA` continua `submitted` numa session `error`.
-
-### Segurança
-
-- ✅ **Exposição de `session.data` pela Store API: corrigida ([ADR-006](decisions/ADR-006-store-api-redacts-mercadopago-provider-data.md), invariante 24).**
-  - **Antes** (comprovado na API em execução em 2026-09-27, só com a publishable key e o ID, sem login): `GET /store/carts/:id` devolvia `data` inteiro das sessions do Mercado Pago, com `card_token`, `payer` (e-mail e CPF), `issuer_id`, `installments`, idempotency keys, `mercadopago_order_id`/`payment_id`, status internos, QR/ticket e geração Pix. Isso valia também para carts completos. Com `?fields=`, o mesmo saía em `payments[].data` do cart e em `GET /store/orders/:id` de pedido guest.
-  - **Depois** (mesma verificação): em todos esses caminhos, inclusive `?fields=` sem `provider_id`, sai só `data: { payment_method_id }`. O armazenamento não mudou (`session.data` e `payment.data` completos [banco 2026-09-27]).
-  - ✅ `GET /store/mercadopago/orders/:id/pix` reduzida a `status` + `ticket_url` (pendência 4) e, depois do E2E da capability, removida. Etapa intermediária: a substituição por uma capability temporária está proposta no [ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md).
-- 🔍 **`GET /store/orders/:id` do core devolve e-mail e endereços a quem tem o ID do pedido** ([INV-002](investigations/INV-002-store-order-retrieve-without-auth.md)). Verificado no código do `@medusajs/medusa` 2.20.1; não verificado em requisição real.
-- ✅ `GET /store/mercadopago/carts/:id/pix` responde 410 sem corpo depois de `completed_at`, e o DTO Pix (também o do prepare) não traz mais `mercadopago_order_id`, `session_status` nem status nativos (invariantes 14 e 26). Validado por testes unitários; ⚠ não reexecutado em E2E.
-
-### Capability de pagamento ([ADR-007](decisions/ADR-007-payment-access-capability-for-pix.md))
-
-Implementação: `780b740`, `87587f6`, `86b8ed0`, `93abe1f`, `d5a4b23`, `9884ba5`, `4de8ace`, `f2ceb7c`.
-
-- ✅ **Migration `Migration20260927120000` aplicada** em 2026-09-27, sozinha (`ModulesSdkUtils.buildMigrationScript` apontado só para a pasta de migrations do `paymentAccess`). Tabela `payment_access_grant` com 14 colunas, PK, `CHECK (purpose = 'pix_payment_view')` e os índices `deleted_at`, `token_hash` (único), `payment_session_id`, `expires_at`; nenhuma outra migration registrada na última hora [banco 2026-09-27].
-- ✅ Validação automatizada (código em `f2ceb7c`): backend 12 suítes / 233 testes, `tsc`, `medusa build`; storefront `pnpm test` 6/6, `tsc`; lint nos mesmos números de antes. Não há testes de integração HTTP; os de módulo criam bancos e não foram executados.
-- 🐞 **Corrigido durante o E2E** (`f2ceb7c`): o re-export de tipos em `cart.ts` (`"use server"`, `9884ba5`) fazia o `next dev` (Turbopack) responder 500 em todas as páginas; o `next build` aceitava.
-
-#### E2E sandbox (2026-09-27, código em `f2ceb7c`)
-
-Fonte: roteiro HTTP contra o backend e o storefront em execução e a Orders API sandbox (Pix reais criados pelo Mercado Pago), mais consultas read-only [banco 2026-09-27]. **Não houve navegador:** o que depende de UI está separado abaixo.
-
-```text
-Guest Pix (pedido #87, order_01M3J8Y4V3DA79QAQ81QCW5HEK)                     38 checks, 37 ✅
-  prepare 200 pending com QR/ticket; capability só no header, formato pat_, fora do corpo      ✅
-  sem Access-Control-Expose-Headers                                                           ✅
-  expiração da capability = deadline (60,0 min) + 15 min                                      ✅
-  leitura: pending com QR, order_id null antes da conclusão, no-store/no-referrer, allowlist  ✅
-  carts/:id/pix 200 com cart aberto, sem campos internos                                      ✅
-  refresh reutiliza a cobrança (mesmo charge_ref) e emite nova capability; 2ª aba válida      ✅
-  4ª emissão revoga a mais antiga; #2–#4 válidas (limite de 3)                                ✅
-  404 genérico idêntico: sem token, token só na query, token desconhecido, malformado         ✅
-  complete com Pix pendente → pedido (cenário A)                                              ✅
-  carts/:id/pix → 410 sem corpo; prepare depois da conclusão → 400 sem capability             ✅
-  capability depois da conclusão → order_id = pedido criado (consulta reversa real)           ✅
-  GET /store/orders/:id → payment_sessions[].data = { payment_method_id: "pix" }              ✅
-  confirmação (RSC) com cookie mostra o Pix; sem cookie / cookie inválido → sem dados Pix     ✅
-  HTML da confirmação sem o token                                                             ❌ em next dev / ✅ em produção
-Pix → cartão (mesma session)                                                                  5 ✅
-  capability antiga → 404 genérico; carts/:id/pix → 404
-Cliente autenticado (pedido #88)                                                              10 ✅
-  cart do cliente, capability, leitura sem campos internos, pedido com Pix pendente,
-  order_id resolvido; JWT do cliente sozinho não abre a rota (404)
-Deadline (Pix PT1H)                                                                           ver abaixo
-Banco: 6 grants, todos token_hash hex de 64, nenhum plaintext; 1 superseded, 1 payment_method_changed
-```
-
-- **Token no HTML só em `next dev`:** o debug do React Server Components em desenvolvimento serializa o valor de `cookies()` no payload RSC, com **todos** os cookies HttpOnly (inclusive `_medusa_jwt` de cliente logado), não só a capability. Num build de produção (cópia isolada do storefront, sem `.env`, `next start`), com o cookie `__Host-payment_access` a página mostra o Pix e o HTML não contém o token, o nome do cookie nem IDs do Mercado Pago. Não expor `next dev` publicamente.
-- **Deadline** (probe com cart aberto e o pedido #87):
-  - 2 min depois da deadline: a capability do probe responde só `{ status: "expired" }`, sem QR, enquanto o Mercado Pago (leitura ao vivo por `carts/:id/pix`) ainda dizia **`pending`**. A deadline local conservadora escondeu o QR antes do Mercado Pago.
-  - O pedido #87 (deadline ~5 min antes) já respondia **`canceled`**, só status. O check automatizado esperava `expired` e falhou; o comportamento é o do invariante 34 (status final do Mercado Pago é mantido, sem artefatos).
-  - 16 min depois da deadline: o Mercado Pago mostrava **`canceled`** para o probe; as duas capabilities (deadline + 15 min) → 404 genérico.
-- **Estados no E2E real:** `pending` ✅; `canceled` ✅ (Pix vencido cancelado pelo Mercado Pago); `expired` só pela deadline local ✅. **`approved` e `failed` não reproduzíveis no sandbox** nesta data (antes do ADR-010, o Pix do checkout não era aprovável: [testing.md](mercadopago/testing.md#pix-no-sandbox)); cobertos só por testes automatizados (`V`, `PAX`). Depois do ADR-010, `approved` foi observado pela capability na confirmação do E2E B' (#91, [E2E-B-PRIME-2026-09-29](investigations/E2E-B-PRIME-2026-09-29.md#ui-decisão-humana-2026-09-29)); `failed` continua não reproduzido.
-- Os testes que dependem de navegador estão na seção seguinte (executados depois, com o código em `6e4579b`).
-
-#### E2E no navegador (2026-09-27/28, código em `6e4579b`)
-
-Fonte: Chromium 153 headless controlado por DevTools Protocol (só em 127.0.0.1), contra o storefront em **build de produção** (`next build` + `next start`, cópia isolada sem `.env`), o backend em execução e a Orders API sandbox. Pedido `order_01M3JHS6GK94AHXYRVSMEKG7W7` (guest). O `next dev` não foi usado como evidência. O preenchimento do Payment Brick (iframe do Mercado Pago) foi substituído pelo mesmo payload do `onSubmit` via HTTP; o resto aconteceu no navegador.
-
-```text
-A — Review + cookie                                                               11/11 ✅
-  painel Pix e modal com copia e cola após o prepare pelo Server Action
-  cookie __Host-payment_access criado pelo servidor: HttpOnly, Secure, SameSite=Lax, Path=/, host-only
-  token ausente de document.cookie, URL, DOM, corpos de resposta (HTML, RSC, Server Actions) e URLs de requisição
-B — cart concluído com a Review aberta                                             5/5 ✅
-  cart concluído por outra requisição (Store API), não pelo webhook (Pix do checkout não é pagável no sandbox)
-  carts/:id/pix → 410 sem corpo; a Review mostra "already completed", esconde QR/copia e cola e libera "Place order"
-C — confirmação                                                                    12/12 ✅
-  "Awaiting payment" + modal com QR/copia e cola/ticket (payment_window_closed=false)
-  polling pelo Server Action (2 chamadas em 16 s); token/nome do cookie ausentes do DOM e das respostas
-  deadline + 2 min: API status=pending, payment_window_closed=true, sem QR/ticket;
-                    página "Time to pay this Pix has ended", sem botão de QR
-  deadline + 12 min: Mercado Pago canceled → API status=canceled; página "Pix canceled", nada pagável
-```
-
-- **Limitação:** `approved` **não** foi reproduzido: um Pix criado pelo checkout não pode ser pago no sandbox ([testing.md](mercadopago/testing.md#pix-no-sandbox)). Continua coberto só por testes automatizados (`V`, `PAX`). Não houve E2E de pagamento aprovado.
-- **Limitação:** a passagem para `payment_window_closed=true` foi observada **depois de recarregar** a página, não como transição ao vivo do polling (o polling da página para depois de 180 × 5 s = 15 min, antes da deadline de 1 h).
-- ✅ `GET /store/mercadopago/orders/:id/pix` e `retrievePixPayment` removidos depois do E2E (commit `refactor(mercadopago): remove legacy Pix order access`).
-- ✅ Limpeza: job diário `cleanup-payment-access-grants` apaga capabilities expiradas ou revogadas há 7 dias ou mais (commit `chore(backend): clean up expired payment access grants`). Testes unitários; filtro conferido read-only no banco (7 grants, 0 elegíveis com 7 dias, 7 com corte em "agora") [banco 2026-09-27]. O job ainda não rodou agendado.
-- ✅ `carts/:id/pix` e o prepare deixam de devolver QR/ticket a partir da deadline local, mantendo o status do provider e sinalizando `payment_window_closed` (`5ccd353`, [ADR-008](decisions/ADR-008-pix-payment-window-hides-artifacts.md)). Testes unitários; ⚠ na Review, depois da deadline, não observado no sandbox nem no navegador.
-- ✅ A rota da capability mantém o status real do provider e devolve `payment_window_closed`; a confirmação exibe por `status` + janela ([ADR-009](decisions/ADR-009-payment-access-keeps-provider-status.md)). Testes unitários e E2E no navegador (`pending` + janela fechada, `canceled`; `approved` não reproduzível).
-- 🔍 Oferecer um novo Pix na confirmação quando a janela fecha sem pagamento: não existe caminho depois da conclusão do cart; exige decisão (ADR-009).
-- 🔍 `POST /store/mercadopago/payment-sessions/:id` devolve `payment_session` inteiro, com `data`; `/store/mercadopago/*` não é coberto pelo ADR-006. Pendência separada.
+16. 🔍 `GET /store/orders/:id` do core devolve e-mail e endereços a quem tem o ID do pedido ([INV-002](investigations/INV-002-store-order-retrieve-without-auth.md)); verificado só no código.
+17. 🔍 `POST /store/mercadopago/payment-sessions/:id` devolve a `payment_session` inteira, com `data`; `/store/mercadopago/*` não é coberto pelo ADR-006.
+18. 🔍 Oferecer um novo Pix na confirmação quando a janela fecha sem pagamento: não há caminho depois da conclusão do cart; exige decisão ([ADR-009](decisions/ADR-009-payment-access-keeps-provider-status.md)).
+19. ⚠ Job `cleanup-payment-access-grants`: execução agendada não observada (última verificação em 2026-09-27).
 
 ## Dívida técnica
 
 Não bloqueia nenhuma pendência funcional.
 
-- 🛠 **Lógica de pagamento fora de workflows.** Está no provider (`service.ts`) e nas rotas; só a capability de pagamento (ADR-007) usa `src/workflows` e `src/jobs`, e `src/subscribers` está vazio. Contraria o [AGENTS.md](../AGENTS.md). **Não foi decisão deliberada** [decisão humana 2026-09-25].
-- 🛠 Sem CI.
-- 🛠 Sem testes de integração HTTP.
-- 🛠 Storefront só tem o teste da fronteira Pix (`pnpm test`); sem testes de componentes.
+- 🛠 **Lógica de pagamento fora de workflows** (provider e rotas). Contraria o [AGENTS.md](../AGENTS.md). **Não foi decisão deliberada** [decisão humana 2026-09-25]. É a origem dos 2 warnings do lint do backend (`updatePaymentSession` em rota).
+- 🛠 Sem CI. Sem testes de integração HTTP. Storefront só com o teste da fronteira Pix (`pnpm test`).
+- 🛠 Lint do storefront: 12 erros e 3 warnings em código não alterado (`no-explicit-any`, `no-unused-vars`, `ban-ts-comment`, `exhaustive-deps`), medido em 2026-09-27; não corrigido nem remedido.
 - 🛠 `apps/storefront/tsconfig.tsbuildinfo` versionado.
-- 🛠 `.env.template` incompleto: no backend falta `AUTH_MFA_ENCRYPTION_KEY` e há variáveis não referenciadas no código do projeto; o storefront não tem `.env.template` (ver [development.md](development.md)).
-- 🛠 `@medusajs/eslint-plugin` 2.21.0 × Medusa 2.20.1.
-- 🛠 [AGENTS.md](../AGENTS.md) desatualizado ("Medusa latest", "storefront opcional", "package manager não fixo").
-- 🛠 Skills desatualizadas: não mencionam o Pix. A `mercadopago-medusa` já aponta para `docs/`.
-- 🛠 `.github/agents/medusa-mercadopago.agent.md` desatualizado (não menciona o Pix).
-- 🛠 Comentários citam documentos que não existem no repositório: "the audit's D4 finding" (`payment-sessions/[id]/route.ts`) e "see the report" (`service.ts`, `reauthorizePixOrder`).
+- 🛠 `.env.template` incompleto (ver [development.md](development.md#variáveis-de-ambiente)).
+- 🛠 Skills e `.github/agents/medusa-mercadopago.agent.md` desatualizados: não mencionam o Pix.
+- 🛠 Comentários citam documentos que não existem: "the audit's D4 finding" (`payment-sessions/[id]/route.ts`) e "see the report" (`service.ts`, `reauthorizePixOrder`).
 - 🛠 `"pp_mercadopago"` repetido em 7 arquivos (backend e storefront).
 - 🛠 Textos da UI de pagamento em inglês ("Place order", painel Pix).
 - 🛠 Pix ainda não mergeado na `main`.
+
+## Dados de teste deixados de propósito
+
+Pedidos #97 e #99 ([INV-006](investigations/INV-006-payment-collection-rollback.md)), Orders sandbox sem cart ([INV-003](investigations/INV-003-pix-sandbox-approval.md), [E2E-CANCEL-PAYMENT](investigations/E2E-CANCEL-PAYMENT-2026-09-30.md)) as tentativas listadas nas pendências 1 e 2 e os pedidos #145–#147 da [INV-010](investigations/INV-010-medusa-2-21-2-upgrade.md#resultados). Não apagar sem autorização.

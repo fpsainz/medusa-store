@@ -1,6 +1,6 @@
 # ADR-007: Capability temporária (`payment_access`) para acompanhar o Pix depois do checkout
 
-> Status: aceito · Data: 2026-09-27 · Commits: `780b740`, `87587f6`, `86b8ed0`, `93abe1f`, `d5a4b23`, `9884ba5`, `4de8ace`, `f2ceb7c` (E2E em [status](../status.md#capability-de-pagamento-adr-007)) · Regra de status da decisão 6 substituída pelo [ADR-009](ADR-009-payment-access-keeps-provider-status.md)
+> Status: aceito · Data: 2026-09-27 · Commits: `780b740`, `87587f6`, `86b8ed0`, `93abe1f`, `d5a4b23`, `9884ba5`, `4de8ace`, `f2ceb7c` (E2E em [E2E-SANDBOX-2026-09-27](../investigations/E2E-SANDBOX-2026-09-27.md#capability-de-pagamento-adr-007)) · Regra de status da decisão 6 substituída pelo [ADR-009](ADR-009-payment-access-keeps-provider-status.md)
 
 Marcadores de origem: [../README.md](../README.md#convenções). Além deles, **[MCP 2026-09-27]** indica documentação oficial do Mercado Pago consultada pelo MCP `search_documentation` (MLB) nessa data.
 
@@ -37,7 +37,7 @@ Marcadores de origem: [../README.md](../README.md#convenções). Além deles, **
 ### Não confirmado
 
 - Se a Orders API devolve uma data absoluta de expiração do Pix. Os tipos do SDK `mercadopago` 3.6.1 declaram `date_of_expiration` e `expiration_time` opcionais no payment, mas o exemplo oficial não mostra nenhum dos dois. A consulta read-only ao banco foi bloqueada pelo hook do plugin Mercado Pago em 2026-09-27.
-- Quando a Order passa de fato a `expired`, e se `order.expired` é enviado para Pix online. Observação posterior no sandbox (2026-09-27): um Pix vencido passou a `canceled` alguns minutos depois do prazo; `expired` não foi observado ([status](../status.md#capability-de-pagamento-adr-007)). A documentação diz que um pagamento não pago é considerado expirado 30 dias após o vencimento e recomenda cancelar no vencimento.
+- Quando a Order passa de fato a `expired`, e se `order.expired` é enviado para Pix online. Observação posterior no sandbox (2026-09-27): um Pix vencido passou a `canceled` alguns minutos depois do prazo; `expired` não foi observado ([E2E-SANDBOX-2026-09-27](../investigations/E2E-SANDBOX-2026-09-27.md#capability-de-pagamento-adr-007)). A documentação diz que um pagamento não pago é considerado expirado 30 dias após o vencimento e recomenda cancelar no vencimento.
 - Se alguma página do Mercado Pago mostra `description`/`external_reference` (e portanto o `cart_id`) a quem abre o `ticket_url`.
 - Se a ordem de entrega das notificações é garantida. Não está documentada.
 

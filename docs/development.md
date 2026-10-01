@@ -9,7 +9,7 @@ Comandos genéricos (dev, build, lint, testes, db): [../AGENTS.md](../AGENTS.md)
 - WSL2 / Ubuntu.
 - Node: `^20.19.0 || >=22.12.0` (`engines` em `package.json`).
 - pnpm `10.11.1` (`packageManager`). Não usar outro gerenciador.
-- Versões fixadas: Medusa `2.20.1` em todos os pacotes `@medusajs/*` do backend e storefront, exceto `@medusajs/eslint-plugin` `2.21.0` (raiz) e `@medusajs/ui` `4.2.4`. Não atualizar dependências sem autorização.
+- Versões fixadas: Medusa `2.21.2` em todos os pacotes `@medusajs/*` do backend e do storefront e em `@medusajs/eslint-plugin` (raiz); `@medusajs/ui` `4.2.6`. **Exceção:** `@medusajs/icons` continua em `2.20.1` no storefront; o motivo não está registrado. Upgrade a partir do 2.20.1 em `bdefe51` [commit `bdefe51`]; validação: [INV-010](investigations/INV-010-medusa-2-21-2-upgrade.md). Não atualizar dependências sem autorização.
 - Portas: backend `9000` (admin em `/app`), storefront `8000`.
 
 ## Banco (Supabase)
@@ -46,7 +46,7 @@ Somente nomes. Nunca registrar valores.
 ## Verificações rápidas
 
 ```bash
-cd apps/backend && pnpm run test:unit     # 6 suítes / 121 testes em 2026-09-25
+cd apps/backend && pnpm run test:unit     # 23 suítes / 569 testes em 2026-10-01
 cd apps/backend && npx tsc --noEmit -p .
 cd apps/storefront && npx tsc --noEmit
 ```

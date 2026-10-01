@@ -1,6 +1,6 @@
 # INV-004: `refundPayment` — valor, idempotency key e reembolso total × parcial
 
-> Status: concluída · Aberta em: 2026-09-29 · Concluída em: 2026-09-29 · Commit: `fb5d9a0` (correção não commitada) · Decisão: [ADR-011](../decisions/ADR-011-mercadopago-refund-contract.md)
+> Status: concluída · Aberta em: 2026-09-29 · Concluída em: 2026-09-29 · Commit: `fb5d9a0` (correção ainda não commitada na época; publicada em `0821822` [commit `0821822`]) · Decisão: [ADR-011](../decisions/ADR-011-mercadopago-refund-contract.md)
 
 Marcadores de origem: [../README.md](../README.md#convenções). **[MCP 2026-09-29]** indica documentação oficial do Mercado Pago consultada pelo MCP `search_documentation` (MLB) nessa data. **[core 2.20.1]** indica código do Medusa 2.20.1 instalado em `node_modules`, lido nessa data. **[sandbox 2026-09-29]** indica resultado observado na Orders API sandbox nesta investigação.
 

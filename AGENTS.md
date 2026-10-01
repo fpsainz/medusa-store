@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## This project
+
+These facts override the generic starter text below:
+
+- Package manager: **pnpm** (`packageManager` in the root `package.json`). Do not run detection or use another manager.
+- `apps/storefront` **exists** (Next.js 15) and is part of the project.
+- Backend: Medusa **2.21.2**. `@medusajs/icons` is still 2.20.1 in the storefront. Status of the upgrade: [docs/status.md](docs/status.md#baseline).
+- Project documentation (state, Mercado Pago integration, decisions, investigations): start at [docs/README.md](docs/README.md) and read only what it routes you to.
+
 ## Overview
 
 Medusa DTC Starter — a Turborepo workspace monorepo containing a Medusa backend (`@medusajs/medusa` latest, Node 20+, PostgreSQL 15+) and an optional storefront (Next.js, Tanstack, etc...).

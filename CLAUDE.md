@@ -17,13 +17,13 @@ docs/              → documentação técnica e decisões do projeto (não é i
 código/testes/Git  → fonte de verdade sobre o comportamento implementado
 ```
 
-O AGENTS.md veio do starter e tem trechos que não correspondem ao projeto; as divergências conhecidas estão em [docs/status.md](docs/status.md). Na dúvida sobre um fato, verificar no código, nos testes e no Git.
+O AGENTS.md veio do starter; a seção "This project" no topo dele prevalece sobre os trechos genéricos do starter. Na dúvida sobre um fato, verificar no código, nos testes e no Git.
 
 ## Projeto
 
 Monorepo de ecommerce:
 
-- `apps/backend` — Medusa.js 2.20.1
+- `apps/backend` — Medusa.js 2.21.2 (upgrade de 2.20.1 validado na regressão mínima da [INV-010](docs/investigations/INV-010-medusa-2-21-2-upgrade.md); caminhos não revalidados estão nos limites dela)
 - `apps/storefront` — Next.js 15
 - PostgreSQL hospedado no Supabase
 - Mercado: Brasil · Moeda: BRL
@@ -91,7 +91,8 @@ provider token:     pp_mercadopago
 - Decisão arquitetural nova: criar ADR em `docs/decisions/`. ADR aceito não se edita (exceto correção factual); se a decisão mudar, ele é substituído por outro.
 - Achado sem evidência suficiente ("efeito não validado") não vira correção direta: abrir investigação em `docs/investigations/` (achado → investigação → teste → decisão → ADR/docs → código, se necessário).
 - Documentação quebrada e comentário de código que contradiz o comportamento atual: corrigir na hora.
-- Ao fim de cada etapa relevante: atualizar `docs/status.md` com data e commit.
+- Ao fim de cada etapa relevante: atualizar `docs/status.md` com data e commit. Ele guarda só o estado atual; a evidência de uma execução E2E vai para a investigação de origem ou para um registro `docs/investigations/E2E-<TEMA>-<data>.md`, e o `status.md` aponta para ela.
+- Investigação concluída, registro de execução e ADR aceito são histórico: não reescrevê-los para o estado atual. Evidência obtida numa versão do Medusa vale para essa versão até ser revalidada.
 - Documentar só o que foi verificado, sempre indicando a origem de cada afirmação:
   - comprovado pelo código ou pelos testes no commit indicado no cabeçalho do documento: sem marcação (é o padrão);
   - comprovado pelo Git (diff ou histórico): **[commit `<hash>`]**; apenas afirmado no texto da mensagem: **[mensagem de commit `<hash>`]**;
@@ -99,7 +100,7 @@ provider token:     pp_mercadopago
   - informação vinda de decisão ou confirmação humana: **[decisão humana AAAA-MM-DD]**;
   - hipótese ainda não validada: **[não validado]**.
 - Nunca tratar como especificação algo marcado **[não validado]**. Para promover um item a fato, é preciso evidência nova, e a marcação é atualizada junto.
-- Dados de banco/produção vão só para evidência ou histórico (`docs/status.md`, `docs/runbooks/`), nunca para a documentação arquitetural, salvo quando necessários para explicar uma decisão.
+- Dados de banco/produção vão só para evidência ou histórico (registros e investigações em `docs/investigations/`, `docs/runbooks/`; contagens atuais em `docs/status.md`), nunca para a documentação arquitetural, salvo quando necessários para explicar uma decisão.
 - Nunca registrar segredos, host de túnel, dados pessoais ou dados de cartão.
 - Cada fato fica em um único documento; os outros apontam para ele. Não copiar código para a documentação.
 - Se a documentação contradisser o código, o código é a verdade: corrigir o documento ou avisar.

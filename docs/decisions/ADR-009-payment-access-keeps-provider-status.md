@@ -5,7 +5,7 @@
 ## Contexto
 
 - O [ADR-008](ADR-008-pix-payment-window-hides-artifacts.md) separou a validade do Pix no Mercado Pago (`expiration_time`), a deadline local (`mercadopago_pix_expires_at`, política de exposição) e o status do provider. Na Review, a deadline passou a esconder QR/ticket sem alterar o status (`payment_window_closed`).
-- A decisão 6 do [ADR-007](ADR-007-payment-access-capability-for-pix.md) fazia `GET /store/mercadopago/payment-access/pix` (`toPixAccessDto`) devolver `status: "expired"` depois da deadline, mesmo com o Mercado Pago ainda em `action_required` (display `pending`). Isso foi observado no E2E de 2026-09-27 ([status](../status.md#capability-de-pagamento-adr-007)): a deadline local virava status.
+- A decisão 6 do [ADR-007](ADR-007-payment-access-capability-for-pix.md) fazia `GET /store/mercadopago/payment-access/pix` (`toPixAccessDto`) devolver `status: "expired"` depois da deadline, mesmo com o Mercado Pago ainda em `action_required` (display `pending`). Isso foi observado no E2E de 2026-09-27 ([E2E-SANDBOX-2026-09-27](../investigations/E2E-SANDBOX-2026-09-27.md#capability-de-pagamento-adr-007)): a deadline local virava status.
 - Pedido de alinhamento [decisão humana 2026-09-27].
 
 ## Decisão

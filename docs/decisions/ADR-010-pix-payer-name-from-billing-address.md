@@ -1,6 +1,6 @@
 # ADR-010: Nome do pagador do Pix derivado do endereço de cobrança do cart
 
-> Status: aceito · Data: 2026-09-29 · Commits: ainda não commitado (implementado sobre `a4aae37`) · Evidência: [INV-003](../investigations/INV-003-pix-sandbox-approval.md)
+> Status: aceito · Data: 2026-09-29 · Commits: `fb5d9a0` [commit `fb5d9a0`] (implementado sobre `a4aae37`) · Evidência: [INV-003](../investigations/INV-003-pix-sandbox-approval.md)
 
 Marcadores de origem: [../README.md](../README.md#convenções). **[MCP 2026-09-29]** indica documentação oficial do Mercado Pago consultada pelo MCP `search_documentation` (MLB) nessa data. O código citado é o do commit `a4aae37`, com o `@medusajs/payment` 2.20.1 e o SDK `mercadopago` 3.6.1 instalados.
 

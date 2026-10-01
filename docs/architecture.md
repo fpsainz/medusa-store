@@ -8,7 +8,7 @@
 Navegador ──> apps/storefront (Next.js 15, :8000)
                  │  @medusajs/js-sdk  +  @mercadopago/sdk-react (Payment Brick)
                  ▼
-             apps/backend (Medusa 2.20.1, :9000)
+             apps/backend (Medusa 2.21.2, :9000)
                  │  módulo de pagamento @medusajs/medusa/payment
                  │    └─ provider customizado: src/modules/mercadopago  (pp_mercadopago)
                  ├──> PostgreSQL (Supabase)

@@ -19,7 +19,7 @@ Fatos:
 - O Mercado Pago **recomenda cancelar os pagamentos não realizados dentro da data de vencimento**, "para evitar problemas de cobrança e conciliação". Só 30 dias depois do vencimento ele considera o pagamento expirado, com status "cancelado ou expirado" [MCP 2026-09-27].
 - `expired` = "não foi concluída dentro do tempo limite"; `canceled` = "cancelada e não será concluída" [MCP 2026-09-27].
 - A documentação não garante que o QR deixe de ser pagável exatamente no vencimento, e não há campo confirmado que diga "ainda pagável" (a data absoluta na resposta continua não confirmada; ver ADR-007).
-- No sandbox (2026-09-27), 2 min depois da deadline a Order ainda estava `action_required` (display `pending`); alguns minutos depois passou a `canceled` ([status](../status.md#capability-de-pagamento-adr-007)).
+- No sandbox (2026-09-27), 2 min depois da deadline a Order ainda estava `action_required` (display `pending`); alguns minutos depois passou a `canceled` ([E2E-SANDBOX-2026-09-27](../investigations/E2E-SANDBOX-2026-09-27.md#capability-de-pagamento-adr-007)).
 - Até esta decisão, `GET /store/mercadopago/carts/:id/pix` e o prepare devolviam QR/ticket enquanto o Mercado Pago dissesse `pending`, inclusive depois da deadline; `GET /store/mercadopago/payment-access/pix` já parava de devolvê-los na deadline.
 
 ## Decisão

@@ -24,7 +24,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 - Cartão e Pix usam **o mesmo provider** (`pp_mercadopago`). A diferença está só em `session.data` (ver "Discriminação cartão × Pix").
 - Webhook com validação HMAC: [webhook.md](webhook.md).
 - Reembolso (`refundPayment`): total sem body, parcial com `transactions[{ id, amount }]`, uma idempotency key por reembolso (`refund.id`). Testes unitários e E2E no sandbox (2026-09-29, cartão e Pix). Regras: invariantes 42–44; decisão: [ADR-011](../decisions/ADR-011-mercadopago-refund-contract.md); evidências: [INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md).
-- Cancelamento (`cancelPayment`): implementado, com testes unitários (`cancel-payment.unit.spec.ts`; invariante 48). Exercitado no sandbox em 2026-09-30 só por chamada direta ao provider, numa Order de cartão com captura manual. O checkout não cria Order de cartão cancelável: [status.md](../status.md#cancelpayment-do-cartão-2026-09-30).
+- Cancelamento (`cancelPayment`): implementado, com testes unitários (`cancel-payment.unit.spec.ts`; invariante 48). Exercitado no sandbox em 2026-09-30 só por chamada direta ao provider, numa Order de cartão com captura manual. O checkout não cria Order de cartão cancelável: [E2E-CANCEL-PAYMENT-2026-09-30](../investigations/E2E-CANCEL-PAYMENT-2026-09-30.md).
 
 ## Mapa de arquivos
 
@@ -72,7 +72,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 6. Pagamento confirmado pelo webhook → evento → `getWebhookActionAndData` → `captured`.
 7. A página do pedido lê o Pix com a capability do browser: `retrieveOrderPixPayment` (Server Action) → `readPixPaymentAccess` (server-only, cookie HttpOnly) → `GET /store/mercadopago/payment-access/pix`. O `order_id` da URL só é comparado com o pedido da capability. `OrderPixPayment` mostra o status e, enquanto pagável, o QR/copia e cola/ticket num modal, com polling pelo mesmo Server Action. Sem capability válida para aquele pedido (outro browser, capability expirada), a página não mostra dados Pix.
 
-`pending_authorization` é suportado pelo `completeCart` do Medusa 2.20.1: o pedido é criado com o Pix ainda pendente, e o pagamento chega depois pelo webhook (`processPaymentWorkflow`). Evidência E2E em [../status.md](../status.md#evidência-e2e).
+`pending_authorization` é suportado pelo `completeCart` do Medusa 2.20.1: o pedido é criado com o Pix ainda pendente, e o pagamento chega depois pelo webhook (`processPaymentWorkflow`). Evidência E2E em [E2E-SANDBOX-2026-09-27](../investigations/E2E-SANDBOX-2026-09-27.md#pix-antes-do-hardening-do-webhook). No 2.21.2, o código desse caminho do `complete-cart` não mudou, e o comportamento foi revalidado em runtime (#147, [INV-010](../investigations/INV-010-medusa-2-21-2-upgrade.md#resultados)).
 
 ### Troca de método e remoção de session
 
@@ -130,7 +130,7 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 
 ### Prazo da tentativa de cartão (implementação atual)
 
-Conferido no código do working tree sobre `e822f52` (2026-09-30, sem commit). Decisão: [ADR-016](../decisions/ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md), que substitui em parte a decisão 12 do [ADR-015](../decisions/ADR-015-card-ambiguous-order-reconciliation.md). O prazo é `created_at + 24 h`, avaliado pelo relógio do PostgreSQL (`PAST_DEADLINE_SQL`, `attempt-states.ts`).
+Conferido no código do working tree sobre `e822f52` (2026-09-30), publicado depois em `a92d307` [commit `a92d307`]. Decisão: [ADR-016](../decisions/ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md), que substitui em parte a decisão 12 do [ADR-015](../decisions/ADR-015-card-ambiguous-order-reconciliation.md). O prazo é `created_at + 24 h`, avaliado pelo relógio do PostgreSQL (`PAST_DEADLINE_SQL`, `attempt-states.ts`).
 
 - **O prazo controla o replay, a decifração e a retenção do ciphertext. Ele não encerra a tentativa.** Nenhum caminho do código leva uma tentativa a `expired` pelo prazo: a regra 10 continua na tabela (`transitions.ts`), mas nada a chama. Não existe job para tentativas; o único job do projeto é `cleanup-payment-access-grants`.
 - **Retenção.** Um Place order depois do prazo anula o ciphertext sem transição (`destroyCardTokenForRetention`), antes de qualquer outra coisa. `readCardToken` e `beginAuthorization` depois do prazo também o anulam e recusam. Tentativas abandonadas (sem Place order depois do prazo) continuam com o ciphertext; a limpeza periódica é decisão posterior (ADR-016).

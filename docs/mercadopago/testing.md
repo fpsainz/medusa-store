@@ -8,9 +8,7 @@
 cd apps/backend && pnpm run test:unit
 ```
 
-Resultado em 2026-09-30, com os testes de `cancelPayment` (código em `e822f52`, spec novo sem commit): **23 suítes, 524 testes, todos passando**; `tsc --noEmit` limpo. Antes deles: 22 suítes, 515 testes.
-
-Resultado em 2026-09-29, com o workflow de cancelamento que cancela o Pix antes do core ([ADR-013](../decisions/ADR-013-cancel-order-wrapper-cancels-pix-first.md)), commit `12c5ff6`: **18 suítes, 336 testes, todos passando.** Antes, com só o hook ([ADR-012](../decisions/ADR-012-cancel-pending-pix-on-order-cancel.md)): 15 suítes, 310 testes. Em `0821822`: 13 suítes, 285 testes.
+Resultado em 2026-10-01, no commit `bdefe51` (Medusa 2.21.2): **23 suítes, 569 testes, todos passando**; `tsc --noEmit` limpo. Contagens anteriores ficam no histórico do Git deste arquivo.
 
 | Spec (em `apps/backend/src/`) | Cobre |
 |---|---|
@@ -35,7 +33,7 @@ Resultado em 2026-09-29, com o workflow de cancelamento que cancela o Pix antes 
 ### Sem cobertura
 
 - `retrievePayment`, `getPaymentStatus`, `capturePayment`, `initiatePayment` (nenhuma menção no spec do provider).
-- `cancelPayment` não tem teste automatizado contra a Orders API real nem pelo caminho do core; a execução no sandbox de 2026-09-30 foi por chamada direta ao provider ([status.md](../status.md#cancelpayment-do-cartão-2026-09-30)).
+- `cancelPayment` não tem teste automatizado contra a Orders API real nem pelo caminho do core; a execução no sandbox de 2026-09-30 foi por chamada direta ao provider ([E2E-CANCEL-PAYMENT-2026-09-30](../investigations/E2E-CANCEL-PAYMENT-2026-09-30.md)).
 - `refundPayment` não tem teste automatizado contra a Orders API real. O E2E manual de 2026-09-29 (cartão e Pix, total e parcial) está na [INV-004](../investigations/INV-004-refund-payment-amount-and-idempotency.md#e2e-sandbox-2026-09-29).
 - Um teste que falhe se `id` for adicionado ao provider em `medusa-config.ts`.
 - Testes de integração HTTP (não existem) e CI (não existe).
@@ -59,7 +57,7 @@ O procedimento detalhado está na skill [.agents/skills/integration-testing/SKIL
 - Usar apenas dados sandbox oficiais do Mercado Pago. Nunca registrar cartão, CVV, tokens ou credenciais.
 - O webhook real exige URL pública: [../runbooks/dev-webhook-tunnel.md](../runbooks/dev-webhook-tunnel.md).
 
-Estado das validações E2E (cenários, pedidos e pendências): [../status.md](../status.md#evidência-e2e). Não duplicar aqui.
+Estado das validações E2E (cenários, pedidos e pendências): [matriz de evidências](../status.md#matriz-de-evidências), que aponta o registro de cada área. Não duplicar aqui.
 
 ### Pix no sandbox
 
@@ -88,7 +86,7 @@ Verificado no código em `3a56150` e na documentação oficial do Mercado Pago (
 - O `notifications_history` do MCP voltou vazio mesmo logo depois de entregas confirmadas pelo túnel. Não usar esse histórico como evidência de envio ou de não envio.
 - O "Simular" do painel de Webhooks só envia uma notificação com o `Data ID` informado; não muda o status da Order. Como o webhook lê o status em `GET /v1/orders/{id}`, simular uma Order não paga não autoriza nada.
 - Uma Order criada direto na API com `APRO` não pertence a nenhuma session. Ela serve para o teste negativo de correlação (503, sem atingir a session do cart), não para os cenários B, B' e C.
-- **Vencimento observado** (2026-09-27, Pix com `expiration_time: "PT1H"`): 2 min depois do prazo a Order ainda estava `pending` (display); entre ~2 e ~7 min depois passou a **`canceled`**. `expired` não foi observado como status da Order. Detalhes em [../status.md](../status.md#capability-de-pagamento-adr-007).
+- **Vencimento observado** (2026-09-27, Pix com `expiration_time: "PT1H"`): 2 min depois do prazo a Order ainda estava `pending` (display); entre ~2 e ~7 min depois passou a **`canceled`**. `expired` não foi observado como status da Order. Detalhes em [E2E-SANDBOX-2026-09-27](../investigations/E2E-SANDBOX-2026-09-27.md#capability-de-pagamento-adr-007).
 - Como o Pix da #76 e da #77 foi aprovado continua sem explicação [não validado]. As duas foram criadas antes do commit `c41d686`, então o código que rodava naquele momento não está no Git. Nenhum código commitado envia `first_name`.
 
 ## Checklist após mudanças no provider ou no webhook

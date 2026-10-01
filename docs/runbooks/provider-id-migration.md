@@ -37,7 +37,7 @@ Nenhum registro ativo em `pp_mercadopago_mercadopago`. As contagens incluem sess
 | 1. Testes unitários do webhook com a nova identidade | OK (2026-09-25) |
 | 2. TypeScript backend e storefront | OK (2026-09-25); lint não executado nesta verificação |
 | 3. `SELECT` sem registros ativos no token antigo | OK [banco 2026-09-25] |
-| 4. E2E de checkout novo com `pp_mercadopago` | Pix: validado em E2E com código posterior a `037a5a8` [decisão humana 2026-09-27] (ver [../status.md](../status.md#evidência-e2e)). Cartão: pendente |
+| 4. E2E de checkout novo com `pp_mercadopago` | Pix: validado em E2E com código posterior a `037a5a8` [decisão humana 2026-09-27] (ver [E2E-SANDBOX-2026-09-27](../investigations/E2E-SANDBOX-2026-09-27.md#pix-antes-do-hardening-do-webhook)). Cartão: pendente |
 | 5. Webhook real sem `AwilixResolutionError` | Webhook real funcionou nos cenários B e C, antes do hardening [decisão humana 2026-09-27]. Depois do hardening: pendente |
 | 6. `retrievePayment`/`getPaymentStatus` em Payment histórico migrado | [não validado] |
 | 7. Mercado Pago disponível no Admin, região afetada | [não validado] no Admin; no banco, a região aponta para `pp_mercadopago` |

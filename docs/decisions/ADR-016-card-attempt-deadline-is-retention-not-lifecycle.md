@@ -1,6 +1,6 @@
 # ADR-016: O prazo da tentativa de cartão controla replay e retenção do CardToken, não o fim da tentativa; tentativa ambígua depois do prazo é resolvida pela busca da Order
 
-> Status: **aceito** em 2026-09-30 [decisão humana 2026-09-30]; implementado no working tree sobre `e822f52` (sem commit), com `H` sem valor aprovado (liberação por `total = 0` desligada) · Data: 2026-09-30 · Revisado: 2026-09-30 (valores de `Q`, margem, semântica de `H`, risco de falso negativo, `expired`, limpeza, contrato do storefront: seção 11) · Commits: nenhum ainda · Código revisado: working tree sobre `e822f52`
+> Status: **aceito** em 2026-09-30 [decisão humana 2026-09-30]; implementado sobre `e822f52` e publicado em `a92d307` [commit `a92d307`], com `H` sem valor aprovado (liberação por `total = 0` desligada) · Data: 2026-09-30 · Revisado: 2026-09-30 (valores de `Q`, margem, semântica de `H`, risco de falso negativo, `expired`, limpeza, contrato do storefront: seção 11) · Commits: `a92d307` [commit `a92d307`] · Código revisado: working tree sobre `e822f52`
 
 Substitui **em parte** o [ADR-015](ADR-015-card-ambiguous-order-reconciliation.md): só a interpretação do prazo (`created_at + 24 h`, decisão 12) como fim funcional da tentativa, e as consequências que dependem dela. O restante do ADR-015 continua válido (seção 10). A [INV-009](../investigations/INV-009-card-ambiguous-order-reconciliation.md) não é reaberta.
 
