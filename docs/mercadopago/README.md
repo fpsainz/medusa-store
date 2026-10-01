@@ -130,12 +130,25 @@ A string `"pp_mercadopago"` está duplicada (não importada) na rota do webhook,
 
 ### Prazo da tentativa de cartão (implementação atual)
 
-Conferido no código em `e822f52` (2026-09-30). O prazo é único, `created_at + 24 h` ([ADR-015](../decisions/ADR-015-card-ambiguous-order-reconciliation.md), decisão 12), avaliado pelo relógio do PostgreSQL (`PAST_DEADLINE_SQL`, `attempt-states.ts`).
+Conferido no código do working tree sobre `e822f52` (2026-09-30, sem commit). Decisão: [ADR-016](../decisions/ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md), que substitui em parte a decisão 12 do [ADR-015](../decisions/ADR-015-card-ambiguous-order-reconciliation.md). O prazo é `created_at + 24 h`, avaliado pelo relógio do PostgreSQL (`PAST_DEADLINE_SQL`, `attempt-states.ts`).
 
-- **A expiração é lazy.** `expireIfPastDeadline` (regras 10 e 2) só é chamada por `readCardToken` e `resumeAuthorization` (`mercadopago-card-attempt/service.ts`), que só o `authorizePayment` do provider chama, e só quando a tentativa ainda não tem Order registrada (Place order). No caminho do webhook a Order já foi registrada pelo fallback, e o provider só lê a Order (`settleKnownCardOrder`), sem tocar no prazo. Nenhum job, subscriber ou worker executa essa transição; o único job do projeto é `cleanup-payment-access-grants`.
-- **Tentativa `authorizing`/`unknown` sem Place order depois do prazo:** continua com esse estado no banco e com o `encrypted_card_token`. O módulo recusa entregar o token (`readCardToken` confere o prazo antes de decifrar), mas o ciphertext só é anulado numa transição que destrói o token: estado terminal, `expired` ou remoção da session.
-- **Webhook:** o fallback por tentativa e a regra 12 não conferem o prazo. Uma tentativa ainda `unknown` cuja Order foi paga é resolvida pelo webhook (só `GET`) mesmo depois de 24 h ([webhook.md](webhook.md)). Depois que um Place order a torna `expired`, o fallback a recusa (Order paga → 503) e só a regra 11 (operador) a resolve.
-- **Divergência com o ADR-015** ("passado o prazo, … o token é destruído"): para tentativas abandonadas, a destruição em 24 h não é garantida hoje. Pendência de decisão em [status.md](../status.md#pendências-funcionais-por-prioridade).
+- **O prazo controla o replay, a decifração e a retenção do ciphertext. Ele não encerra a tentativa.** Nenhum caminho do código leva uma tentativa a `expired` pelo prazo: a regra 10 continua na tabela (`transitions.ts`), mas nada a chama. Não existe job para tentativas; o único job do projeto é `cleanup-payment-access-grants`.
+- **Retenção.** Um Place order depois do prazo anula o ciphertext sem transição (`destroyCardTokenForRetention`), antes de qualquer outra coisa. `readCardToken` e `beginAuthorization` depois do prazo também o anulam e recusam. Tentativas abandonadas (sem Place order depois do prazo) continuam com o ciphertext; a limpeza periódica é decisão posterior (ADR-016).
+- **`submitted` depois do prazo:** nenhuma transição. O Place order responde como recusa ("the card must be submitted again"); só um novo envio do Brick a substitui (regra 2).
+- **`unknown`, ou `authorizing` parada, depois do prazo, sem Order registrada:** o provider resolve pela busca da Order (`resolveCardAttemptAfterDeadline`, `service.ts`), só com `GET`, nunca `POST`.
+  - `authorizing` recente: `card_attempt_in_progress`, sem busca. Parada: vai antes a `unknown` (regra 8, `markUnknownIfStale`).
+  - `Q` (30 min desde `authorizing_at`) ainda não atingido: `card_attempt_pending`, sem busca.
+  - A busca usa o `external_reference` exato e a janela `[authorization_started_at − 1 h, min(now, authorizing_at + 1 h)]`.
+  - 1 Order coerente (mesmo `external_reference` na busca e no `GET`, mesmo valor, com payment): associada por `recordOrder`. Se estiver paga ou `failed`/`canceled`, segue `settleKnownCardOrder` (regras 12 e 9); em status não final, a tentativa continua bloqueante (`card_attempt_pending`).
+  - `total = 0`: só encerra a tentativa pela regra 13 (`failUnknownWithoutOrder`) com `H` aprovado e a última tentativa de `POST` mais nova que `H`. **`H` não tem valor aprovado** (`CARD_ATTEMPT_SEARCH_HORIZON_HOURS = null`), então hoje responde `card_attempt_manual_review` sem escrever nada.
+  - Erro da API, resposta estruturalmente inválida ou `total ≠ data.length`: `card_attempt_pending`. `total > 1`, `external_reference` ou valor divergentes: `card_attempt_manual_review`. Nenhum desses resultados escreve.
+  - Depois de um compare-and-set com 0 linhas, a decisão vem só do estado relido (`afterLostCardAttemptRace`), nunca da busca anterior.
+- **Tentativa encerrada:** o Place order corrente termina sem autorizar um cartão novo. Um novo pagamento exige um novo envio do Brick, que cria uma tentativa nova (novo token, `card_attempt_id`, `external_reference`, body e idempotency key), sempre numa Payment Session `pending`:
+  - **regra 9** (Order `failed`/`canceled`): `settleKnownCardOrder` devolve `status: error`, o Payment Module grava a session como `error` e a rota `complete` responde 400 `not_allowed`. Uma session `error` nunca é reutilizada (o `completeCartWorkflow` não a processa). O storefront inicia uma **nova** Payment Session (`initiatePaymentSession`, `POST /store/payment-collections/:id/payment-sessions`); o core remove a antiga pelo `deletePayment`, que aceita a tentativa `failed` sem mudança, e o Brick vai para a nova session. Comprovado no E2E 2b [sandbox 2026-10-01] (1 `POST` novo, 1 Payment, 1 Capture, 1 pedido);
+  - **regra 13** (`total = 0`, hoje desligada porque `H = null`): o provider lança um erro simples, a session continua `pending` e o core responde 200 `PAYMENT_AUTHORIZATION_ERROR`. Pelo código; não exercitado em runtime.
+- **`expired`** (tentativas antigas, expiradas antes do ADR-016): continuam só com o operador (regra 11).
+- **Webhook:** sem mudança. O fallback por tentativa e a regra 12 não conferem o prazo nem usam o token.
+- **Contrato com o storefront:** [ADR-016, seção 4.6](../decisions/ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md#46-contrato-mínimo-com-o-storefront). O storefront ainda não trata esses códigos.
 
 ### Interno × público
 

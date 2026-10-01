@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 const orderCreateMock = jest.fn()
 const orderGetMock = jest.fn()
 const orderCancelMock = jest.fn()
+const orderSearchMock = jest.fn()
 
 jest.mock("mercadopago", () => {
   return {
@@ -11,6 +12,7 @@ jest.mock("mercadopago", () => {
       create: (...args: unknown[]) => orderCreateMock(...args),
       get: (...args: unknown[]) => orderGetMock(...args),
       cancel: (...args: unknown[]) => orderCancelMock(...args),
+      search: (...args: unknown[]) => orderSearchMock(...args),
     })),
   }
 })
@@ -1556,6 +1558,7 @@ describe("MercadoPagoPaymentProviderService — card attempt (INV-009)", () => {
     jest.clearAllMocks()
     orderCreateMock.mockReset()
     orderGetMock.mockReset()
+    orderSearchMock.mockReset()
     attempts = createFakeCardAttempts()
   })
 
@@ -1651,6 +1654,8 @@ describe("MercadoPagoPaymentProviderService — card attempt (INV-009)", () => {
     expect(second.requestOptions.idempotencyKey).toBe(first.requestOptions.idempotencyKey)
     expect(second.body).toEqual(first.body)
     expect(row(input).state).toBe("resolved")
+    // Before the deadline the replay resolves it; the Order is never searched.
+    expect(orderSearchMock).not.toHaveBeenCalled()
   })
 
   it("resumption (rule 5): a stale authorizing attempt is resumed with the same key", async () => {
@@ -1675,33 +1680,12 @@ describe("MercadoPagoPaymentProviderService — card attempt (INV-009)", () => {
     expect(orderCreateMock).not.toHaveBeenCalled()
   })
 
-  it("replay past the deadline → card_attempt_manual_review and expired, no POST", async () => {
-    orderCreateMock.mockRejectedValueOnce(apiError(504))
-    const provider = buildProvider()
-    const input = cardInput(attempts, DATA)
-    await expect(provider.authorizePayment(input)).rejects.toThrow()
-    row(input).past_deadline = true
-
-    await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
-    expect(row(input).state).toBe("expired")
-    expect(orderCreateMock).toHaveBeenCalledTimes(1)
-  })
-
   it("an expired attempt → card_attempt_manual_review, no POST", async () => {
     const provider = buildProvider()
     const input = cardInput(attempts, DATA)
     row(input).state = "expired"
 
     await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
-    expect(orderCreateMock).not.toHaveBeenCalled()
-  })
-
-  it("a submitted attempt whose token is unavailable (deadline) → card_token_unavailable, no POST", async () => {
-    const provider = buildProvider()
-    const input = cardInput(attempts, DATA)
-    row(input).past_deadline = true
-
-    await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_token_unavailable" })
     expect(orderCreateMock).not.toHaveBeenCalled()
   })
 
@@ -1842,6 +1826,332 @@ describe("MercadoPagoPaymentProviderService — card attempt (INV-009)", () => {
 
     expect(result.status).toBe("captured")
     expect(row(input).state).toBe("resolved")
+  })
+
+  describe("after the deadline (ADR-016)", () => {
+    const MINUTE = 60_000
+    const searchResult = (orders: unknown[], total: unknown = String(orders.length)) => ({ data: orders, paging: { total } })
+    const listed = (input: any) => ({ id: "ORD_INV009", external_reference: row(input).external_reference })
+    const orderOf = (input: any, overrides: Record<string, unknown> = {}) =>
+      approvedOrder({ external_reference: row(input).external_reference, total_amount: "110.00", ...overrides })
+    const declined = (status: string) => ({
+      status,
+      transactions: { payments: [{ id: "PAY_INV009", status: status === "canceled" ? "canceled" : "failed" }] },
+    })
+
+    // An attempt left unknown by a lost POST response, now past the deadline,
+    // with its last POST `lastPostMinutesAgo` before the database clock.
+    async function ambiguousPastDeadline(lastPostMinutesAgo = 90) {
+      const provider = buildProvider()
+      const input = cardInput(attempts, DATA)
+      orderCreateMock.mockRejectedValueOnce(apiError(504))
+      await expect(provider.authorizePayment(input)).rejects.toThrow()
+      const lastPost = new Date(attempts.clock.now.getTime() - lastPostMinutesAgo * MINUTE)
+      Object.assign(row(input), {
+        past_deadline: true,
+        authorization_started_at: new Date(lastPost.getTime() - 10 * MINUTE),
+        authorizing_at: lastPost,
+      })
+      orderCreateMock.mockClear()
+      return { provider, input }
+    }
+
+    const expectNoWrite = (input: any, state = "unknown") => {
+      expect(row(input).state).toBe(state)
+      expect(row(input).mercadopago_order_id).toBeNull()
+      expect(attempts.failUnknownWithoutOrder).not.toHaveBeenCalled()
+      expect(attempts.failUnknown).not.toHaveBeenCalled()
+      expect(orderCreateMock).not.toHaveBeenCalled()
+    }
+
+    it("paid Order: search + GET, recorded and settled with that Order (rule 12), no POST", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([listed(input)]))
+      orderGetMock.mockResolvedValue(orderOf(input))
+
+      const result = await provider.authorizePayment(input)
+
+      expect(orderCreateMock).not.toHaveBeenCalled()
+      expect(orderSearchMock.mock.calls[0][0].options.external_reference).toBe(row(input).external_reference)
+      expect(orderGetMock).toHaveBeenCalledWith({ id: "ORD_INV009" })
+      expect(attempts.recordOrder).toHaveBeenCalledWith(input.data.card_attempt_id, "ORD_INV009")
+      expect(attempts.resolveUnknown).toHaveBeenCalledWith(input.data.card_attempt_id, "ORD_INV009")
+      expect(row(input).state).toBe("resolved")
+      expect(result.status).toBe("captured")
+      expect(result.data.mercadopago_order_id).toBe("ORD_INV009")
+    })
+
+    it("searches the exact external_reference over [first POST − margin, min(now, last POST + margin)]", async () => {
+      const { provider, input } = await ambiguousPastDeadline(90)
+      orderSearchMock.mockResolvedValue(searchResult([listed(input)]))
+      orderGetMock.mockResolvedValue(orderOf(input))
+
+      await provider.authorizePayment(input)
+
+      const lastPost = row(input).authorizing_at!.getTime()
+      const firstPost = row(input).authorization_started_at!.getTime()
+      expect(orderSearchMock.mock.calls[0][0].options).toEqual({
+        begin_date: new Date(firstPost - 60 * MINUTE).toISOString(),
+        end_date: new Date(lastPost + 60 * MINUTE).toISOString(),
+        external_reference: row(input).external_reference,
+      })
+
+      const recent = await ambiguousPastDeadline(40)
+      orderSearchMock.mockClear().mockResolvedValue(searchResult([listed(recent.input)]))
+      orderGetMock.mockResolvedValue(orderOf(recent.input))
+      await recent.provider.authorizePayment(recent.input)
+      expect(orderSearchMock.mock.calls[0][0].options.end_date).toBe(attempts.clock.now.toISOString())
+    })
+
+    it.each(["failed", "canceled"])("%s Order: recorded and ended by rule 9 (the card must be submitted again)", async (status) => {
+      const { provider, input } = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([listed(input)]))
+      orderGetMock.mockResolvedValue(orderOf(input, declined(status)))
+
+      const result = await provider.authorizePayment(input)
+
+      expect(attempts.failUnknown).toHaveBeenCalledWith(input.data.card_attempt_id, "ORD_INV009")
+      expect(row(input).state).toBe("failed")
+      expect(row(input).token).toBeNull()
+      expect(["error", "canceled"]).toContain(result.status)
+      expect(orderCreateMock).not.toHaveBeenCalled()
+    })
+
+    it("Order not final: recorded, the attempt stays blocking (card_attempt_pending)", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([listed(input)]))
+      orderGetMock.mockResolvedValue(
+        orderOf(input, { status: "processing", transactions: { payments: [{ id: "PAY_INV009", status: "in_process" }] } })
+      )
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_pending" })
+      expect(row(input).state).toBe("unknown")
+      expect(row(input).mercadopago_order_id).toBe("ORD_INV009")
+      expect(orderCreateMock).not.toHaveBeenCalled()
+    })
+
+    it("total = 0 without an approved H → card_attempt_manual_review, nothing written", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([], "0"))
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+      expectNoWrite(input)
+    })
+
+    it("total = 0 with H set (test value only) and every precondition → rule 13; the Place order does not authorize a new card", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      provider.cardAttemptSearchHorizonHours_ = 48
+      orderSearchMock.mockResolvedValue(searchResult([], 0))
+
+      await expect(provider.authorizePayment(input)).rejects.toThrow(/attempt has ended; the card must be submitted again/)
+
+      expect(attempts.failUnknownWithoutOrder).toHaveBeenCalledWith(input.data.card_attempt_id, 48)
+      expect(row(input).state).toBe("failed")
+      expect(row(input).last_error_class).toBe("order_not_found_after_deadline")
+      expect(row(input).mercadopago_order_id).toBeNull()
+      expect(row(input).token).toBeNull()
+      expect(orderCreateMock).not.toHaveBeenCalled()
+    })
+
+    it("total = 0 beyond H → card_attempt_manual_review, nothing written", async () => {
+      const { provider, input } = await ambiguousPastDeadline(3 * 24 * 60)
+      provider.cardAttemptSearchHorizonHours_ = 48
+      orderSearchMock.mockResolvedValue(searchResult([], "0"))
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+      expectNoWrite(input)
+    })
+
+    it("before the quiet period Q → card_attempt_pending, no search", async () => {
+      const { provider, input } = await ambiguousPastDeadline(10)
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_pending" })
+      expect(orderSearchMock).not.toHaveBeenCalled()
+      expectNoWrite(input)
+    })
+
+    it.each([
+      ["timeout", apiError(0, "MPConnectionError")],
+      ["429", apiError(429)],
+      ["5xx", apiError(503)],
+    ])("search %s → card_attempt_pending, nothing written", async (_label, error) => {
+      const { provider, input } = await ambiguousPastDeadline()
+      provider.cardAttemptSearchHorizonHours_ = 48
+      orderSearchMock.mockRejectedValue(error)
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_pending" })
+      expectNoWrite(input)
+    })
+
+    it.each([
+      ["no body", undefined],
+      ["no paging", { data: [] }],
+      ["paging.total missing", { data: [], paging: {} }],
+      ["paging.total not numeric", { data: [], paging: { total: "abc" } }],
+      ["paging.total not an integer", { data: [], paging: { total: 0.5 } }],
+      ["paging.total negative", { data: [], paging: { total: -1 } }],
+      ["data not an array", { data: null, paging: { total: "0" } }],
+      ["total ≠ data.length", { data: [], paging: { total: "1" } }],
+      ["listed Order without id", { data: [{ external_reference: "x" }], paging: { total: "1" } }],
+    ])("invalid search answer (%s) → card_attempt_pending, nothing written (even with H set)", async (_label, answer) => {
+      const { provider, input } = await ambiguousPastDeadline()
+      provider.cardAttemptSearchHorizonHours_ = 48
+      orderSearchMock.mockResolvedValue(answer)
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_pending" })
+      expectNoWrite(input)
+    })
+
+    it("total > 1 → card_attempt_manual_review, nothing written", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([listed(input), { ...listed(input), id: "ORD_2" }]))
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+      expectNoWrite(input)
+      expect(orderGetMock).not.toHaveBeenCalled()
+    })
+
+    it("external_reference different in the search or in the GET → card_attempt_manual_review", async () => {
+      const first = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([{ id: "ORD_INV009", external_reference: "cart_inv009" }]))
+      await expect(first.provider.authorizePayment(first.input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+      expectNoWrite(first.input)
+
+      const second = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([listed(second.input)]))
+      orderGetMock.mockResolvedValue(orderOf(second.input, { external_reference: "cart_inv009" }))
+      await expect(second.provider.authorizePayment(second.input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+      expectNoWrite(second.input)
+    })
+
+    it.each([
+      ["different", "99.00"],
+      ["missing", undefined],
+    ])("amount %s → card_attempt_manual_review, nothing written", async (_label, totalAmount) => {
+      const { provider, input } = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([listed(input)]))
+      orderGetMock.mockResolvedValue(orderOf(input, { total_amount: totalAmount }))
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+      expectNoWrite(input)
+    })
+
+    it("GET of the listed Order fails → card_attempt_pending, nothing written", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([listed(input)]))
+      orderGetMock.mockRejectedValue(apiError(500))
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_pending" })
+      expectNoWrite(input)
+    })
+
+    it("a recent authorizing attempt is never probed (card_attempt_in_progress, no search)", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      Object.assign(row(input), { state: "authorizing", stale: false })
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_in_progress" })
+      expect(orderSearchMock).not.toHaveBeenCalled()
+      expect(row(input).state).toBe("authorizing")
+    })
+
+    it("a stale authorizing attempt goes to unknown (rule 8) and is then resolved by the search", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      Object.assign(row(input), { state: "authorizing", stale: true })
+      orderSearchMock.mockResolvedValue(searchResult([listed(input)]))
+      orderGetMock.mockResolvedValue(orderOf(input))
+
+      const result = await provider.authorizePayment(input)
+
+      expect(attempts.markUnknownIfStale).toHaveBeenCalledWith(input.data.card_attempt_id)
+      expect(row(input).state).toBe("resolved")
+      expect(result.status).toBe("captured")
+      expect(orderCreateMock).not.toHaveBeenCalled()
+    })
+
+    it("race: the webhook records the paid Order during the search → rule 13 loses; settled with that Order, never failed", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      provider.cardAttemptSearchHorizonHours_ = 48
+      orderSearchMock.mockImplementation(async () => {
+        row(input).mercadopago_order_id = "ORD_INV009"
+        return searchResult([], "0")
+      })
+      orderGetMock.mockResolvedValue(orderOf(input))
+
+      const result = await provider.authorizePayment(input)
+
+      expect(attempts.failUnknownWithoutOrder).toHaveBeenCalled()
+      expect(row(input).state).toBe("resolved")
+      expect(result.status).toBe("captured")
+      expect(orderCreateMock).not.toHaveBeenCalled()
+    })
+
+    it("race: another path ended the attempt first → the stale search is not reused (card must be submitted again)", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      orderSearchMock.mockResolvedValue(searchResult([listed(input)]))
+      orderGetMock.mockResolvedValue(orderOf(input))
+      attempts.recordOrder.mockImplementationOnce(async () => {
+        Object.assign(row(input), { state: "failed", token: null })
+        return false
+      })
+
+      await expect(provider.authorizePayment(input)).rejects.toThrow(/attempt has ended/)
+      expect(row(input).state).toBe("failed")
+      expect(attempts.resolveUnknown).not.toHaveBeenCalled()
+    })
+
+    it("retention: the ciphertext is destroyed on a Place order past the deadline, without a transition", async () => {
+      const { provider, input } = await ambiguousPastDeadline(10)
+      expect(row(input).token).not.toBeNull()
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_pending" })
+
+      expect(attempts.destroyCardTokenForRetention).toHaveBeenCalledWith(input.data.card_attempt_id)
+      expect(row(input).token).toBeNull()
+      expect(row(input).state).toBe("unknown")
+    })
+
+    it("submitted past the deadline: no transition, token destroyed, answered as a decline (never card_token_unavailable)", async () => {
+      const provider = buildProvider()
+      const input = cardInput(attempts, DATA)
+      row(input).past_deadline = true
+
+      await expect(provider.authorizePayment(input)).rejects.toThrow(/attempt has ended; the card must be submitted again/)
+      expect(row(input).state).toBe("submitted")
+      expect(row(input).token).toBeNull()
+      expect(orderCreateMock).not.toHaveBeenCalled()
+      expect(orderSearchMock).not.toHaveBeenCalled()
+    })
+
+    it("an expired attempt (legacy) stays with the operator: card_attempt_manual_review, no search", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      Object.assign(row(input), { state: "expired", token: null })
+
+      await expect(provider.authorizePayment(input)).rejects.toMatchObject({ code: "card_attempt_manual_review" })
+      expect(orderSearchMock).not.toHaveBeenCalled()
+    })
+
+    it("after release, a new Brick submission is a new attempt: new id, external_reference, body and key", async () => {
+      const { provider, input } = await ambiguousPastDeadline()
+      provider.cardAttemptSearchHorizonHours_ = 48
+      orderSearchMock.mockResolvedValue(searchResult([], "0"))
+      await expect(provider.authorizePayment(input)).rejects.toThrow(/attempt has ended/)
+      const old = { ...row(input) }
+
+      orderCreateMock.mockResolvedValue(approvedOrder())
+      const next = cardInput(attempts, { ...DATA, card_token: "FAKE_new_card_token" })
+      await provider.authorizePayment(next)
+
+      const { body, requestOptions } = orderCreateMock.mock.calls[0][0]
+      expect(next.data.card_attempt_id).not.toBe(input.data.card_attempt_id)
+      expect(body.external_reference).toBe(row(next).external_reference)
+      expect(body.external_reference).not.toBe(old.external_reference)
+      expect(body.transactions.payments[0].payment_method.token).toBe("FAKE_new_card_token")
+      expect(row(next).body_sha256).not.toBe(old.body_sha256)
+      expect(requestOptions.idempotencyKey).not.toBe(
+        createHash("sha256").update(`payses_inv009:card:${old.body_sha256}`).digest("hex")
+      )
+      expect(row(input).state).toBe("failed")
+    })
   })
 
   describe("deletePayment", () => {

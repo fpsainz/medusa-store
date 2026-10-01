@@ -18,17 +18,23 @@ type FakeRow = {
   token: string | null
   past_deadline: boolean
   stale: boolean
+  authorization_started_at: Date | null
+  authorizing_at: Date | null
 }
+
+const MINUTE = 60_000
 
 const HOLDING: State[] = ["submitted", "authorizing", "unknown"]
 
 export function createFakeCardAttempts() {
   const rows = new Map<string, FakeRow>()
   let sequence = 0
+  // The database clock (the view's checked_at).
+  const clock = { now: new Date("2026-10-02T12:00:00.000Z") }
 
   const view = (row: FakeRow) => {
     const { token, stale: _stale, ...rest } = row
-    return { ...rest, has_card_token: token !== null }
+    return { ...rest, has_card_token: token !== null, checked_at: new Date(clock.now) }
   }
 
   const get = (id: string) => {
@@ -62,6 +68,7 @@ export function createFakeCardAttempts() {
 
   const fake = {
     rows,
+    clock,
 
     register(input: {
       token: string
@@ -87,6 +94,8 @@ export function createFakeCardAttempts() {
         token: input.token,
         past_deadline: input.past_deadline ?? false,
         stale: input.stale ?? false,
+        authorization_started_at: null,
+        authorizing_at: null,
       })
       return id
     },
@@ -98,14 +107,12 @@ export function createFakeCardAttempts() {
       if (row.payment_session_id !== paymentSessionId) {
         throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.notFound)
       }
-      // Like the real module: past the deadline an open attempt is expired
-      // and a submitted one replaced before refusing.
+      // Like the real module (ADR-016): past the deadline the ciphertext is
+      // destroyed without a transition before refusing.
       if (row.past_deadline && HOLDING.includes(row.state)) {
-        const wasSubmitted = row.state === "submitted"
-        row.state = wasSubmitted ? "replaced" : "expired"
         row.token = null
         throw cardAttemptError(
-          wasSubmitted ? CARD_ATTEMPT_ERROR_CODES.tokenUnavailable : CARD_ATTEMPT_ERROR_CODES.manualReview
+          row.state === "submitted" ? CARD_ATTEMPT_ERROR_CODES.tokenUnavailable : CARD_ATTEMPT_ERROR_CODES.pending
         )
       }
       if (row.state === "expired" || (row.state === "unknown" && row.token === null)) {
@@ -118,19 +125,22 @@ export function createFakeCardAttempts() {
     }),
 
     beginAuthorization: jest.fn(async (id: string, bodySha256: string) =>
-      move(id, ["submitted"], "authorizing", { body_sha256: bodySha256 })
+      move(id, ["submitted"], "authorizing", {
+        body_sha256: bodySha256,
+        authorization_started_at: new Date(clock.now),
+        authorizing_at: new Date(clock.now),
+      })
     ),
 
     resumeAuthorization: jest.fn(async (id: string) => {
       const row = get(id)
       if (row.past_deadline && (row.state === "authorizing" || row.state === "unknown")) {
-        row.state = "expired"
-        row.token = null
-        throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+        throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.pending)
       }
       if (row.state === "unknown" || (row.state === "authorizing" && row.stale)) {
         row.state = "authorizing"
         row.stale = false
+        row.authorizing_at = new Date(clock.now)
         return view(row)
       }
       throw errorFor(row)
@@ -174,6 +184,42 @@ export function createFakeCardAttempts() {
     }),
 
     replaceSubmitted: jest.fn(async (id: string) => move(id, ["submitted"], "replaced")),
+
+    markUnknownIfStale: jest.fn(async (id: string) => {
+      const row = get(id)
+      if (row.state !== "authorizing" || !row.stale) {
+        return false
+      }
+      row.state = "unknown"
+      row.stale = false
+      return true
+    }),
+
+    // Rule 13, with the same conditions as the real statement.
+    failUnknownWithoutOrder: jest.fn(async (id: string, horizonHours: number, lastErrorClass = "order_not_found_after_deadline") => {
+      const row = get(id)
+      const lastPost = row.authorizing_at?.getTime() ?? NaN
+      const now = clock.now.getTime()
+      if (
+        row.state !== "unknown" ||
+        row.mercadopago_order_id !== null ||
+        !row.past_deadline ||
+        !(lastPost < now - 30 * MINUTE) ||
+        !(lastPost > now - horizonHours * 60 * MINUTE)
+      ) {
+        throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.conflict)
+      }
+      return move(id, ["unknown"], "failed", { last_error_class: lastErrorClass })
+    }),
+
+    destroyCardTokenForRetention: jest.fn(async (id: string) => {
+      const row = get(id)
+      if (!row.past_deadline || row.token === null) {
+        return 0
+      }
+      row.token = null
+      return 1
+    }),
   }
 
   return fake

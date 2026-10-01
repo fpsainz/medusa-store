@@ -22,7 +22,8 @@ Specs (caminhos relativos a `apps/backend/src/`):
 `CW` = `workflows/__tests__/cancel-order-with-pending-pix.unit.spec.ts` ·
 `AC` = `api/admin/orders/[id]/cancel/__tests__/route.unit.spec.ts` ·
 `RF` = `modules/mercadopago/__tests__/refund.unit.spec.ts` ·
-`CP` = `modules/mercadopago/__tests__/cancel-payment.unit.spec.ts`
+`CP` = `modules/mercadopago/__tests__/cancel-payment.unit.spec.ts` ·
+`CA` = `modules/mercadopago-card-attempt/__tests__/*.unit.spec.ts`
 
 ## Identidade
 
@@ -88,6 +89,13 @@ Detalhes em [webhook.md](webhook.md). Teste de todos os itens abaixo: `W`.
 23. **`payment_method.type` do cartão vem somente de `payment_type_id`** (`credit_card` ou `debit_card`, coletado de `additionalData.paymentTypeId`). O tipo nunca é inferido nem tem fallback para `credit_card`. Ausente ou inválido → `authorizePayment` recusa sem criar Order. A rota recusa valores fora do contrato, e `prepaid_card` fica fora. — `service.ts` (`isCardPaymentType`), `payment-sessions/[id]/route.ts`. Testes: `S`, `PS`. [ADR-005](../decisions/ADR-005-card-payment-type-from-brick.md)
 
 47. **Cartão: a idempotency key enviada ao `POST /v1/orders` é uma função determinística da chave base da session e do body da operação.** O mesmo body (retry do SDK ou novo Place order com os mesmos dados) usa sempre a mesma chave; qualquer diferença de body (novo `card_token`, parcelas, payer, tipo, valor) usa outra; a ordem das chaves do `data` persistido não altera a chave. A chave base (`mercadopago_idempotency_key`) continua gravada e nunca é enviada como chave da Order de cartão; a chave derivada não é gravada. — `service.ts` (`authorizePayment`, `getCardOrderIdempotencyKey`). Teste: `S`. [ADR-014](../decisions/ADR-014-card-order-idempotency-key-from-body.md)
+
+## Tentativa de cartão depois do prazo
+
+Decisão: [ADR-016](../decisions/ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md). Comportamento: [README](README.md#prazo-da-tentativa-de-cartão-implementação-atual).
+
+49. **O prazo da tentativa (`created_at + 24 h`) nunca muda o estado da tentativa.** Depois dele não há replay nem decifração; o ciphertext é anulado por um `UPDATE` condicional que só toca `encrypted_card_token`, `token_destroyed_at` e `updated_at`. `submitted` depois do prazo responde como recusa (novo envio do Brick), nunca `card_token_unavailable`. — `mercadopago-card-attempt/service.ts` (`destroyCardTokenForRetention`, `readCardToken`, `beginAuthorization`, `resumeAuthorization`), `transitions.ts` (`buildRetentionDestroyTokenStatement`), `service.ts` (`authorizePayment`). Testes: `CA`, `S`.
+50. **Depois do prazo, uma tentativa ambígua só libera um novo pagamento quando o destino da sua Order é determinado, e a resolução nunca faz `POST /v1/orders`.** Só busca (`external_reference` exato, janela da tentativa) e `GET`. Order paga → concluída com essa Order; `failed`/`canceled` → regra 9; `total = 0` → regra 13 (`unknown → failed`, num único compare-and-set com `mercadopago_order_id IS NULL`, prazo vencido, `Q` e `H`), **só com `H` aprovado** (hoje `null` → `card_attempt_manual_review`). Erro, resposta inválida ou incoerente, `total > 1`, divergência de `external_reference` ou valor nunca liberam e não escrevem. `authorizing` recente nunca é sondada. — `service.ts` (`resolveCardAttemptAfterDeadline`, `searchCardAttemptOrder`, `afterLostCardAttemptRace`), `mercadopago-card-attempt/service.ts` (`failUnknownWithoutOrder`, `markUnknownIfStale`), `attempt-states.ts`. Testes: `S`, `CA`.
 
 ## Cancelamento do pedido
 

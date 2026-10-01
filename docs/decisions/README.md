@@ -22,7 +22,8 @@ Só viram ADR decisões com evidência no código ou no Git. O que não foi deci
 | [ADR-012](ADR-012-cancel-pending-pix-on-order-cancel.md) | Cancelar o Pix pendente no hook `orderCanceled` do `cancelOrderWorkflow` | Substituído em parte pelo ADR-013 (o hook continua como rede de segurança) | 2026-09-29 |
 | [ADR-013](ADR-013-cancel-order-wrapper-cancels-pix-first.md) | Cancelar o Pix pendente antes do `cancelOrderWorkflow` (workflow wrapper na rota do Admin) | Aceito | 2026-09-29 |
 | [ADR-014](ADR-014-card-order-idempotency-key-from-body.md) | Idempotency key da Order de cartão derivada da chave base + body canônico | Aceito | 2026-09-29 |
-| [ADR-015](ADR-015-card-ambiguous-order-reconciliation.md) | Reconciliação da Order de cartão com resultado ambíguo (tentativa em módulo próprio com token cifrado, `external_reference` por tentativa, replay idempotente, fallback do webhook) | Aceito | 2026-09-29 |
+| [ADR-015](ADR-015-card-ambiguous-order-reconciliation.md) | Reconciliação da Order de cartão com resultado ambíguo (tentativa em módulo próprio com token cifrado, `external_reference` por tentativa, replay idempotente, fallback do webhook) | Aceito; substituído em parte pelo ADR-016 (prazo como fim funcional da tentativa) | 2026-09-29 |
+| [ADR-016](ADR-016-card-attempt-deadline-is-retention-not-lifecycle.md) | O prazo da tentativa de cartão controla replay e retenção do CardToken, não o fim da tentativa; tentativa ambígua depois do prazo resolvida pela busca da Order | Aceito | 2026-09-30 |
 
 As datas são as dos commits em que a decisão entrou no código; para um ADR proposto, a data da proposta.
 

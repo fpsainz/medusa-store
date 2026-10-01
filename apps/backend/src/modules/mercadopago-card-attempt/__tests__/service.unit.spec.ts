@@ -178,25 +178,23 @@ describe("MercadopagoCardAttemptModuleService", () => {
     })
   })
 
-  describe("single deadline", () => {
-    it("beginAuthorization of a submitted attempt past the deadline replaces it → card_token_unavailable", async () => {
-      const { service, calls } = makeService((sql) => {
-        if (isUpdateTo(sql, "replaced")) return [{ id: ID }]
-        if (isSelect(sql)) return [baseRow({ past_deadline: true })]
-        return []
-      })
+  describe("single deadline: retention, never a transition (ADR-016)", () => {
+    const stateChanges = (calls: Call[]) => calls.filter((c) => c.sql.startsWith("UPDATE") && c.sql.includes("SET state ="))
+    const isRetention = (sql: string) => sql.startsWith("UPDATE") && sql.includes("SET encrypted_card_token = NULL") && !sql.includes("SET state")
+
+    it("beginAuthorization of a submitted attempt past the deadline: no transition, ciphertext destroyed → card_token_unavailable", async () => {
+      const { service, calls } = makeService((sql) => (isSelect(sql) ? [baseRow({ past_deadline: true })] : []))
       await expectCode(service.beginAuthorization(ID, "hash"), "card_token_unavailable")
-      expect(calls.some((c) => isUpdateTo(c.sql, "replaced"))).toBe(true)
+      expect(calls.some((c) => isUpdateTo(c.sql, "replaced"))).toBe(false)
+      expect(calls.some((c) => isRetention(c.sql))).toBe(true)
     })
 
-    it("resume (replay) past the deadline expires the attempt → card_attempt_manual_review", async () => {
-      const { service, calls } = makeService((sql) => {
-        if (isUpdateTo(sql, "expired")) return [{ id: ID }]
-        if (isSelect(sql)) return [baseRow({ state: "unknown", past_deadline: true })]
-        return []
-      })
-      await expectCode(service.resumeAuthorization(ID), "card_attempt_manual_review")
-      expect(calls.some((c) => isUpdateTo(c.sql, "expired"))).toBe(true)
+    it("resume (replay) past the deadline: no expiry, no write → card_attempt_pending", async () => {
+      const { service, calls } = makeService((sql) =>
+        isSelect(sql) ? [baseRow({ state: "unknown", past_deadline: true })] : []
+      )
+      await expectCode(service.resumeAuthorization(ID), "card_attempt_pending")
+      expect(calls.some((c) => isUpdateTo(c.sql, "expired"))).toBe(false)
     })
 
     it("resume of a recent authorizing attempt → card_attempt_in_progress", async () => {
@@ -204,16 +202,71 @@ describe("MercadopagoCardAttemptModuleService", () => {
       await expectCode(service.resumeAuthorization(ID), "card_attempt_in_progress")
     })
 
-    it("expireIfPastDeadline: open → expired, else submitted → replaced (deadline-gated), else null", async () => {
-      const expired = makeService((sql) => (isUpdateTo(sql, "expired") ? [{ id: ID }] : []))
-      expect(await expired.service.expireIfPastDeadline(ID)).toBe("expired")
+    it("destroyCardTokenForRetention: past the deadline only, ciphertext fields only, idempotent (1, then 0)", async () => {
+      let destroyed = false
+      const { service, calls } = makeService(() => {
+        if (destroyed) return []
+        destroyed = true
+        return [{ id: ID }]
+      })
+      expect(await service.destroyCardTokenForRetention(ID)).toBe(1)
+      expect(await service.destroyCardTokenForRetention(ID)).toBe(0)
 
-      const replaced = makeService((sql) => (isUpdateTo(sql, "replaced") ? [{ id: ID }] : []))
-      expect(await replaced.service.expireIfPastDeadline(ID)).toBe("replaced")
-      expect(replaced.calls[1].sql).toContain("created_at <= now() - interval '24 hours'")
+      const { sql, params } = calls[0]
+      expect(sql).toContain("SET encrypted_card_token = NULL, token_destroyed_at = COALESCE(token_destroyed_at, now()), updated_at = now()")
+      expect(sql).toContain("encrypted_card_token IS NOT NULL")
+      expect(sql).toContain("created_at <= now() - interval '24 hours'")
+      for (const untouched of ["state =", "mercadopago_order_id", "ended_at"]) {
+        expect(sql).not.toContain(untouched)
+      }
+      expect(params).toEqual([ID])
+      expect(stateChanges(calls)).toHaveLength(0)
+    })
 
-      const none = makeService(() => [])
-      expect(await none.service.expireIfPastDeadline(ID)).toBeNull()
+    it("markUnknownIfStale: rule 8 only past the stale window; false when nothing changed", async () => {
+      const changed = makeService((sql) => (isUpdateTo(sql, "unknown") ? [{ id: ID }] : []))
+      expect(await changed.service.markUnknownIfStale(ID)).toBe(true)
+      expect(changed.calls[0].sql).toContain("state IN ('authorizing')")
+      expect(changed.calls[0].sql).toContain("authorizing_at < now() - interval '5 minutes'")
+
+      const recent = makeService(() => [])
+      expect(await recent.service.markUnknownIfStale(ID)).toBe(false)
+    })
+  })
+
+  describe("rule 13: unknown → failed without an Order (ADR-016)", () => {
+    it("one conditional statement: unknown, no Order, past deadline, Q elapsed, within H; destroys the token and ends the attempt", async () => {
+      const { service, calls } = makeService((sql) =>
+        isUpdateTo(sql, "failed") ? [{ id: ID }] : isSelect(sql) ? [baseRow({ state: "failed", has_card_token: false })] : []
+      )
+
+      const view = await service.failUnknownWithoutOrder(ID, 48)
+
+      expect(view.state).toBe("failed")
+      const updates = calls.filter((c) => c.sql.startsWith("UPDATE"))
+      expect(updates).toHaveLength(1)
+      const { sql, params } = updates[0]
+      expect(sql).toContain("state IN ('unknown')")
+      expect(sql).toContain("mercadopago_order_id IS NULL")
+      expect(sql).toContain("created_at <= now() - interval '24 hours'")
+      expect(sql).toContain("authorizing_at < now() - interval '30 minutes'")
+      expect(sql).toContain("authorizing_at > now() - interval '48 hours'")
+      expect(sql).toContain("encrypted_card_token = NULL")
+      expect(sql).toContain("ended_at = now()")
+      expect(sql).toContain("last_error_class = ?")
+      expect(params).toEqual(["order_not_found_after_deadline", ID])
+    })
+
+    it("0 rows (a webhook recorded the Order first, or a condition failed) → card_attempt_conflict, nothing else written", async () => {
+      const { service, calls } = makeService(() => [])
+      await expectCode(service.failUnknownWithoutOrder(ID, 48), "card_attempt_conflict")
+      expect(calls.filter((c) => c.sql.startsWith("UPDATE"))).toHaveLength(1)
+    })
+
+    it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])("refuses an invalid horizon (%p) before any write", async (horizon) => {
+      const { service, calls } = makeService(() => [{ id: ID }])
+      await expect(service.failUnknownWithoutOrder(ID, horizon)).rejects.toThrow(/invalid search horizon/)
+      expect(calls).toHaveLength(0)
     })
   })
 
@@ -255,13 +308,15 @@ describe("MercadopagoCardAttemptModuleService", () => {
       await expectCode(service.readCardToken(ID, SESSION), code)
     })
 
-    it("open attempt past the deadline is expired before refusing (manual review)", async () => {
-      const { service, calls } = makeService((sql) => {
-        if (isUpdateTo(sql, "expired")) return [{ id: ID }]
-        return withToken({ state: "unknown", past_deadline: true })(sql)
-      })
-      await expectCode(service.readCardToken(ID, SESSION), "card_attempt_manual_review")
-      expect(calls.some((c) => isUpdateTo(c.sql, "expired"))).toBe(true)
+    it.each([
+      ["unknown", "card_attempt_pending"],
+      ["authorizing", "card_attempt_pending"],
+      ["submitted", "card_token_unavailable"],
+    ])("%s past the deadline: ciphertext destroyed without a transition → %s, never decrypted", async (state, code) => {
+      const { service, calls } = makeService(withToken({ state, past_deadline: true }))
+      await expectCode(service.readCardToken(ID, SESSION), code)
+      expect(calls.some((c) => c.sql.startsWith("UPDATE") && c.sql.includes("SET state ="))).toBe(false)
+      expect(calls.some((c) => c.sql.startsWith("UPDATE") && c.sql.includes("SET encrypted_card_token = NULL"))).toBe(true)
     })
 
     it("no error or log carries the token or the envelope", async () => {

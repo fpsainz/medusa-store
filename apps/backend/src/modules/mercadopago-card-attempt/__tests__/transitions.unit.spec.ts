@@ -2,6 +2,7 @@ import { BEFORE_DEADLINE_SQL, PAST_DEADLINE_SQL, TOKEN_HOLDING_CARD_ATTEMPT_STAT
 import {
   buildDestroyTokenStatement,
   buildRecordOrderStatement,
+  buildRetentionDestroyTokenStatement,
   buildTransitionStatement,
   CARD_ATTEMPT_TRANSITIONS,
   type TransitionName,
@@ -30,6 +31,7 @@ describe("card attempt transitions", () => {
         "expired→resolved", // 11
         "expired→failed", // 11
         "unknown→resolved", // 12
+        "unknown→failed", // 13 (ADR-016)
       ].sort()
     )
   })
@@ -120,6 +122,23 @@ describe("card attempt transitions", () => {
     expect(s.sql).not.toContain("state =")
     expect(s.sql).toContain("state IN ('authorizing', 'unknown') AND mercadopago_order_id IS NULL")
     expect(s.bindings).toEqual(["ORD_1", "mpca_1"])
+  })
+
+  it("rule 13 ends an unknown attempt without an Order only past the deadline and the quiet period", () => {
+    const { sql } = statement("fail_unknown_without_order")
+    expect(sql).toContain("state = 'failed'")
+    expect(sql).toContain("state IN ('unknown')")
+    expect(sql).toContain("mercadopago_order_id IS NULL")
+    expect(sql).toContain(PAST_DEADLINE_SQL)
+    expect(sql).toContain("authorizing_at < now() - interval '30 minutes'")
+  })
+
+  it("destroys the ciphertext for retention past the deadline, without touching the state", () => {
+    const s = buildRetentionDestroyTokenStatement("mpca_1")
+    expect(s.sql).not.toContain("state")
+    expect(s.sql).toContain(PAST_DEADLINE_SQL)
+    expect(s.sql).toContain("encrypted_card_token IS NOT NULL")
+    expect(s.bindings).toEqual(["mpca_1"])
   })
 
   it("destroys a leftover token idempotently, never on a token-holding attempt", () => {

@@ -7,6 +7,7 @@ import {
   getCardAttemptDeadline,
   PAST_DEADLINE_SQL,
   TOKEN_HOLDING_CARD_ATTEMPT_STATES,
+  withinSearchHorizonSql,
 } from "./attempt-states"
 import {
   type CardTokenKeyRing,
@@ -20,8 +21,10 @@ import MercadopagoCardAttempt from "./models/mercadopago-card-attempt"
 import {
   buildDestroyTokenStatement,
   buildRecordOrderStatement,
+  buildRetentionDestroyTokenStatement,
   buildTransitionStatement,
   CARD_ATTEMPT_TRANSITIONS,
+  STALE_AUTHORIZING_SQL,
   type TransitionName,
   type TransitionStatement,
 } from "./transitions"
@@ -54,6 +57,9 @@ export type CardAttemptView = {
   ended_at: Date | null
   token_destroyed_at: Date | null
   past_deadline: boolean
+  // PostgreSQL's now() when the view was read: the clock of every deadline
+  // and window condition, so callers never compare against the app clock.
+  checked_at: Date
 }
 
 type AttemptRow = Omit<CardAttemptView, "deadline"> & { encrypted_card_token?: string | null }
@@ -72,6 +78,7 @@ const VIEW_COLUMNS = [
   "authorizing_at", "ended_at", "token_destroyed_at",
   `(encrypted_card_token IS NOT NULL) AS has_card_token`,
   `(${PAST_DEADLINE_SQL}) AS past_deadline`,
+  `now() AS checked_at`,
 ].join(", ")
 
 const sqlList = (states: readonly string[]) => states.map((state) => `'${state}'`).join(", ")
@@ -113,10 +120,12 @@ class MercadopagoCardAttemptModuleService extends MedusaService({
   }
 
   // Returns the plaintext card token for an open attempt of this payment
-  // session, before the deadline. Past the deadline the attempt is expired
-  // (authorizing/unknown) or replaced (submitted) first. A token that cannot
-  // be obtained for an `unknown` attempt means manual review, never failure:
-  // its Mercado Pago Order may exist.
+  // session, before the deadline. Past the deadline the ciphertext is
+  // destroyed (retention, ADR-016) and the state is left as it is: a
+  // submitted attempt answers card_token_unavailable; an authorizing/unknown
+  // one card_attempt_pending (its Order is resolved by the search, not by a
+  // replay). A token that cannot be obtained for an `unknown` attempt before
+  // the deadline means manual review, never failure: its Order may exist.
   async readCardToken(attemptId: string, paymentSessionId: string): Promise<string> {
     const row = await this.inTransaction((em) => this.selectRow(em, attemptId, true))
 
@@ -134,10 +143,10 @@ class MercadopagoCardAttemptModuleService extends MedusaService({
     }
 
     if (row.past_deadline) {
-      const state = await this.expireIfPastDeadline(attemptId)
+      await this.destroyCardTokenForRetention(attemptId)
       this.warnTokenUnavailable(attemptId, "expired")
       throw cardAttemptError(
-        state === "expired" ? CARD_ATTEMPT_ERROR_CODES.manualReview : CARD_ATTEMPT_ERROR_CODES.tokenUnavailable
+        row.state === "submitted" ? CARD_ATTEMPT_ERROR_CODES.tokenUnavailable : CARD_ATTEMPT_ERROR_CODES.pending
       )
     }
 
@@ -212,7 +221,8 @@ class MercadopagoCardAttemptModuleService extends MedusaService({
 
     const row = await this.requireRow(attemptId)
     if (row.state === "submitted" && row.past_deadline) {
-      await this.transition(attemptId, "replace_submitted")
+      // The deadline never replaces it (ADR-016): only a new submission does.
+      await this.destroyCardTokenForRetention(attemptId)
       throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.tokenUnavailable)
     }
     throw this.errorForUnexpectedState(row)
@@ -231,8 +241,9 @@ class MercadopagoCardAttemptModuleService extends MedusaService({
 
     const row = await this.requireRow(attemptId)
     if ((row.state === "authorizing" || row.state === "unknown") && row.past_deadline) {
-      await this.expireIfPastDeadline(attemptId)
-      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+      // No replay past the deadline and no expiry (ADR-016): the attempt is
+      // resolved by searching its Order on the next Place order.
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.pending)
     }
     throw this.errorForUnexpectedState(row)
   }
@@ -277,21 +288,48 @@ class MercadopagoCardAttemptModuleService extends MedusaService({
     return this.transitionOrThrow(attemptId, "fail_from_unknown", [mercadopagoOrderId], [mercadopagoOrderId])
   }
 
-  // Rules 10 and 2 (deadline): an open attempt past the deadline becomes
-  // expired; a submitted one becomes replaced. Returns the resulting state,
-  // or null when nothing applied.
-  async expireIfPastDeadline(attemptId: string): Promise<CardAttemptState | null> {
-    if (await this.transition(attemptId, "expire")) {
-      return "expired"
-    }
-
-    const replaced = await this.run(
-      buildTransitionStatement(
-        { ...CARD_ATTEMPT_TRANSITIONS.replace_submitted, where: PAST_DEADLINE_SQL },
-        { column: "id", value: attemptId }
-      )
+  // Rule 8 only for an authorization interrupted longer than the stale
+  // window (ADR-016: a recent authorizing attempt is never probed). Returns
+  // false when nothing changed.
+  async markUnknownIfStale(attemptId: string, lastErrorClass?: string | null): Promise<boolean> {
+    return (
+      (await this.run(
+        buildTransitionStatement(
+          { ...CARD_ATTEMPT_TRANSITIONS.mark_unknown, where: STALE_AUTHORIZING_SQL },
+          { column: "id", value: attemptId },
+          [lastErrorClass ?? null]
+        )
+      )) > 0
     )
-    return replaced > 0 ? "replaced" : null
+  }
+
+  // Rule 13 (ADR-016): an unknown attempt without a recorded Order, past the
+  // deadline and the quiet period, whose Order search found nothing while
+  // its last POST is younger than the search horizon, ends failed with the
+  // token destroyed, in one conditional statement. 0 rows (another path won,
+  // or a condition no longer holds) → card_attempt_conflict.
+  async failUnknownWithoutOrder(
+    attemptId: string,
+    horizonHours: number,
+    lastErrorClass = "order_not_found_after_deadline"
+  ): Promise<CardAttemptView> {
+    const definition = CARD_ATTEMPT_TRANSITIONS.fail_unknown_without_order
+    const statement = buildTransitionStatement(
+      { ...definition, where: `${definition.where} AND ${withinSearchHorizonSql(horizonHours)}` },
+      { column: "id", value: attemptId },
+      [lastErrorClass]
+    )
+    if ((await this.run(statement)) > 0) {
+      return this.retrieveAttemptView(attemptId)
+    }
+    throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.conflict)
+  }
+
+  // Retention (ADR-016): past the deadline the ciphertext is destroyed
+  // without changing the state, the Order or ended_at. Idempotent; returns
+  // how many rows changed.
+  async destroyCardTokenForRetention(attemptId: string): Promise<number> {
+    return this.run(buildRetentionDestroyTokenStatement(attemptId))
   }
 
   // Rule 2: a submitted attempt is discarded (e.g. its session was removed).
@@ -467,6 +505,7 @@ function toView(row: AttemptRow): CardAttemptView {
     ended_at: row.ended_at,
     token_destroyed_at: row.token_destroyed_at,
     past_deadline: Boolean(row.past_deadline),
+    checked_at: new Date(row.checked_at),
   }
 }
 

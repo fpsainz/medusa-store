@@ -1,6 +1,9 @@
 import {
   BLOCKING_CARD_ATTEMPT_STATES,
   CARD_ATTEMPT_STATES,
+  CARD_ATTEMPT_QUIET_PERIOD_MINUTES,
+  CARD_ATTEMPT_SEARCH_HORIZON_HOURS,
+  CARD_ATTEMPT_SEARCH_MARGIN_MINUTES,
   CARD_ATTEMPT_TTL_HOURS,
   getCardAttemptDeadline,
   LIVE_CARD_ATTEMPT_STATES,
@@ -40,6 +43,12 @@ describe("card attempt states", () => {
     expect(LIVE_CARD_ATTEMPT_STATES_SQL).toBe(
       "state IN ('submitted', 'authorizing', 'unknown', 'expired')"
     )
+  })
+
+  it("fixes Q and the search margin, and has no approved search horizon H (ADR-016)", () => {
+    expect(CARD_ATTEMPT_QUIET_PERIOD_MINUTES).toBe(30)
+    expect(CARD_ATTEMPT_SEARCH_MARGIN_MINUTES).toBe(60)
+    expect(CARD_ATTEMPT_SEARCH_HORIZON_HOURS).toBeNull()
   })
 
   it("has a single deadline: created_at + 24 h", () => {

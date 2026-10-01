@@ -3,6 +3,11 @@ import { createHash } from 'node:crypto'
 import { AbstractPaymentProvider, BigNumber, MedusaError } from '@medusajs/framework/utils'
 import { MercadoPagoConfig, Order } from 'mercadopago'
 
+import {
+  CARD_ATTEMPT_QUIET_PERIOD_MINUTES,
+  CARD_ATTEMPT_SEARCH_HORIZON_HOURS,
+  CARD_ATTEMPT_SEARCH_MARGIN_MINUTES,
+} from '../mercadopago-card-attempt/attempt-states'
 import { CARD_ATTEMPT_ERROR_CODES, cardAttemptError } from '../mercadopago-card-attempt/errors'
 import type MercadopagoCardAttemptModuleService from '../mercadopago-card-attempt/service'
 import type { CardAttemptView } from '../mercadopago-card-attempt/service'
@@ -400,6 +405,9 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
 
   protected readonly client: MercadoPagoConfig
   protected readonly orderClient: Order
+  // ADR-016, H. Null (no approved value): an empty Order search never ends
+  // an attempt.
+  protected cardAttemptSearchHorizonHours_: number | null = CARD_ATTEMPT_SEARCH_HORIZON_HOURS
 
   constructor(container: Record<string, unknown>, options: MercadoPagoProviderOptions) {
     super(container, options)
@@ -1257,11 +1265,21 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
       throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.notFound)
     }
 
+    // Retention (ADR-016): past the deadline, a Place order destroys the
+    // ciphertext first, whatever happens next, without a transition.
+    if (attempt.past_deadline) {
+      await this.destroyCardTokenForRetention(attempts, attempt.id)
+    }
+
     // An Order is already known for this attempt (a lost response later
     // associated by the webhook, or a previous authorization whose Medusa
     // write failed): read it, never create another one.
     if (attempt.mercadopago_order_id) {
       return this.settleKnownCardOrder(attempts, attempt, data, idempotencyKey)
+    }
+
+    if (attempt.past_deadline && ['submitted', 'authorizing', 'unknown'].includes(attempt.state)) {
+      return this.resolveCardAttemptAfterDeadline(attempts, attempt, data, idempotencyKey, amount)
     }
 
     const buildBody = (cardToken: string) =>
@@ -1282,8 +1300,20 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
       case 'submitted': {
         // Rule 3 (provider, option B): persisted in the attempt module's own
         // transaction before the POST, so it survives any workflow failure.
-        body = buildBody(await attempts.readCardToken(attempt.id, paymentSessionId))
-        attempt = await attempts.beginAuthorization(attempt.id, this.getCardOrderBodySha256(body))
+        try {
+          body = buildBody(await attempts.readCardToken(attempt.id, paymentSessionId))
+          attempt = await attempts.beginAuthorization(attempt.id, this.getCardOrderBodySha256(body))
+        } catch (error) {
+          // The deadline passed between the read of the attempt and here: a
+          // submitted attempt was never POSTed, the card is submitted again.
+          if (
+            (error as { code?: string })?.code === CARD_ATTEMPT_ERROR_CODES.tokenUnavailable &&
+            (await attempts.retrieveAttemptView(attempt.id)).past_deadline
+          ) {
+            throw cardAttemptEndedError()
+          }
+          throw error
+        }
         break
       }
       case 'unknown': {
@@ -1323,11 +1353,7 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
         throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
       default:
         // failed or replaced: the attempt has ended and its token is gone.
-        // A plain error keeps the usual declined-card response: the core
-        // turns a non-Medusa error into 200 PAYMENT_AUTHORIZATION_ERROR,
-        // while a MedusaError would be rethrown as a 400.
-        // eslint-disable-next-line @medusajs/use-medusa-error-not-generic-error
-        throw new Error('Mercado Pago: the card payment attempt has ended; the card must be submitted again.')
+        throw cardAttemptEndedError()
     }
 
     let order: Awaited<ReturnType<Order['create']>>
@@ -1426,6 +1452,221 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
         mercadopago_external_reference: attempt.external_reference,
         mercadopago_idempotency_key: idempotencyKey,
       },
+    }
+  }
+
+  // ADR-016: past the deadline an attempt is never replayed and the deadline
+  // never ends it. A submitted attempt was never POSTed: the card must be
+  // submitted again. An ambiguous one (unknown, or an interrupted
+  // authorization) is settled by searching its Order, GET only, never a
+  // POST: paid → settled with that Order; failed/canceled → rule 9; not
+  // final → recorded, still blocking; none → rule 13, only with an approved
+  // horizon H. Anything inconclusive keeps it blocked. A new attempt is only
+  // ever born from a new Brick submission after this one is final.
+  private async resolveCardAttemptAfterDeadline(
+    attempts: MercadopagoCardAttemptModuleService,
+    attempt: CardAttemptView,
+    data: PaymentData,
+    idempotencyKey: string,
+    amount: number
+  ): Promise<any> {
+    if (attempt.state === 'submitted') {
+      throw cardAttemptEndedError()
+    }
+
+    if (attempt.state === 'authorizing') {
+      // A recent authorization is never probed; an interrupted one becomes
+      // unknown first (rule 8, conditional on the stale window).
+      if (!(await attempts.markUnknownIfStale(attempt.id))) {
+        const current = await attempts.retrieveAttemptView(attempt.id)
+        if (current.state === 'authorizing') {
+          throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.inProgress)
+        }
+        return this.afterLostCardAttemptRace(attempts, current, data, idempotencyKey)
+      }
+      attempt = await attempts.retrieveAttemptView(attempt.id)
+    }
+
+    if (attempt.state !== 'unknown' || attempt.mercadopago_order_id) {
+      return this.afterLostCardAttemptRace(attempts, attempt, data, idempotencyKey)
+    }
+
+    const lastPostAt = attempt.authorizing_at ? new Date(attempt.authorizing_at).getTime() : NaN
+    const firstPostAt = attempt.authorization_started_at
+      ? new Date(attempt.authorization_started_at).getTime()
+      : lastPostAt
+    const now = attempt.checked_at.getTime()
+
+    if (!Number.isFinite(lastPostAt) || !Number.isFinite(firstPostAt) || !Number.isFinite(now)) {
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+    }
+
+    // Q: no POST may still be in flight, and the search index had time.
+    if (lastPostAt > now - CARD_ATTEMPT_QUIET_PERIOD_MINUTES * 60_000) {
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.pending)
+    }
+
+    const found = await this.searchCardAttemptOrder(attempt, {
+      begin: firstPostAt - CARD_ATTEMPT_SEARCH_MARGIN_MINUTES * 60_000,
+      end: Math.min(now, lastPostAt + CARD_ATTEMPT_SEARCH_MARGIN_MINUTES * 60_000),
+    })
+
+    if (found.kind === 'none') {
+      const horizonHours = this.cardAttemptSearchHorizonHours_
+      // H: without an approved value, or beyond it, an empty search is no
+      // evidence that the Order does not exist.
+      if (horizonHours === null || lastPostAt <= now - horizonHours * 60 * 60_000) {
+        throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+      }
+
+      try {
+        await attempts.failUnknownWithoutOrder(attempt.id, horizonHours)
+      } catch (error) {
+        if ((error as { code?: string })?.code !== CARD_ATTEMPT_ERROR_CODES.conflict) {
+          throw error
+        }
+        return this.afterLostCardAttemptRace(attempts, await attempts.retrieveAttemptView(attempt.id), data, idempotencyKey)
+      }
+      throw cardAttemptEndedError()
+    }
+
+    const order = found.order
+
+    // Strict: an Order without its amount is not accepted as this attempt's.
+    const orderAmount = order.total_amount
+    if (orderAmount === undefined || orderAmount === null || orderAmount === '' || !this.isSameAmount(orderAmount, amount)) {
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+    }
+
+    try {
+      await attempts.recordOrder(attempt.id, order.id as string)
+    } catch (error) {
+      // The unique index: this Order already belongs to another attempt.
+      if ((error as { code?: string })?.code === CARD_ATTEMPT_ERROR_CODES.conflict) {
+        throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+      }
+      throw error
+    }
+
+    const current = await attempts.retrieveAttemptView(attempt.id)
+    if (current.mercadopago_order_id !== order.id) {
+      return this.afterLostCardAttemptRace(attempts, current, data, idempotencyKey)
+    }
+
+    const status = this.getStatusFromGateway(order.transactions?.payments?.[0]?.status, order.status)
+    if (status === 'captured' || status === 'authorized' || status === 'error' || status === 'canceled') {
+      return this.settleKnownCardOrder(attempts, current, data, idempotencyKey)
+    }
+
+    // Not final: the Order is recorded and the attempt stays blocking until
+    // the webhook or a later Place order reads it final.
+    throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.pending)
+  }
+
+  // Searches the attempt's Order by its exact external_reference and reads
+  // it (GET). Only a structurally valid, coherent answer is conclusive:
+  // transient or malformed answers → card_attempt_pending; more than one
+  // Order or a mismatching one → card_attempt_manual_review.
+  private async searchCardAttemptOrder(
+    attempt: CardAttemptView,
+    window: { begin: number; end: number }
+  ): Promise<{ kind: 'none' } | { kind: 'one'; order: Awaited<ReturnType<Order['get']>> }> {
+    const pending = () => cardAttemptError(CARD_ATTEMPT_ERROR_CODES.pending)
+    const manualReview = () => cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+
+    let result: Awaited<ReturnType<Order['search']>>
+    try {
+      result = await this.orderClient.search({
+        options: {
+          begin_date: new Date(window.begin).toISOString(),
+          end_date: new Date(window.end).toISOString(),
+          external_reference: attempt.external_reference,
+        },
+      })
+    } catch {
+      throw pending()
+    }
+
+    const rawTotal: unknown = result?.paging?.total
+    const total =
+      typeof rawTotal === 'number' && Number.isInteger(rawTotal) && rawTotal >= 0
+        ? rawTotal
+        : typeof rawTotal === 'string' && /^\d+$/.test(rawTotal)
+          ? Number(rawTotal)
+          : null
+    const found: unknown[] | null = Array.isArray(result?.data) ? result.data : null
+
+    if (total === null || found === null) {
+      throw pending()
+    }
+    if (total > 1) {
+      throw manualReview()
+    }
+    if (total !== found.length) {
+      throw pending()
+    }
+    if (total === 0) {
+      return { kind: 'none' }
+    }
+
+    const listed = found[0] as { id?: unknown; external_reference?: unknown } | null
+    if (!listed || typeof listed.id !== 'string' || !listed.id) {
+      throw pending()
+    }
+    if (listed.external_reference !== attempt.external_reference) {
+      throw manualReview()
+    }
+
+    let order: Awaited<ReturnType<Order['get']>>
+    try {
+      order = await this.orderClient.get({ id: listed.id })
+    } catch {
+      throw pending()
+    }
+
+    if (!order || order.id !== listed.id) {
+      throw pending()
+    }
+    if (order.external_reference !== attempt.external_reference || !order.transactions?.payments?.[0]) {
+      throw manualReview()
+    }
+
+    return { kind: 'one', order }
+  }
+
+  // After a conditional write changed nothing (another path won), decides
+  // only from the attempt as it is now; an earlier search is never reused
+  // and the winner is never undone.
+  private async afterLostCardAttemptRace(
+    attempts: MercadopagoCardAttemptModuleService,
+    current: CardAttemptView,
+    data: PaymentData,
+    idempotencyKey: string
+  ): Promise<any> {
+    if (current.mercadopago_order_id) {
+      return this.settleKnownCardOrder(attempts, current, data, idempotencyKey)
+    }
+    if (current.state === 'failed' || current.state === 'replaced') {
+      throw cardAttemptEndedError()
+    }
+    if (current.state === 'expired') {
+      throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.manualReview)
+    }
+    throw cardAttemptError(CARD_ATTEMPT_ERROR_CODES.conflict)
+  }
+
+  // Retention never blocks a Place order: a failure is logged (ids only).
+  private async destroyCardTokenForRetention(
+    attempts: MercadopagoCardAttemptModuleService,
+    attemptId: string
+  ): Promise<void> {
+    try {
+      await attempts.destroyCardTokenForRetention(attemptId)
+    } catch (error) {
+      const logger = this.container.logger as { error?: (message: string) => void } | undefined
+      logger?.error?.(
+        `Mercado Pago: could not destroy the card token of attempt ${attemptId} for retention (${(error as { code?: string })?.code ?? 'error'})`
+      )
     }
   }
 
@@ -1719,6 +1960,15 @@ class MercadoPagoPaymentProviderService extends AbstractPaymentProvider<MercadoP
       },
     }
   }
+}
+
+// The attempt has ended (failed/replaced), or a submitted one is past the
+// deadline: the card must be submitted again (new attempt, new token). A
+// plain error keeps the usual declined-card response: the core turns a
+// non-Medusa error into 200 PAYMENT_AUTHORIZATION_ERROR, while a MedusaError
+// would be rethrown as a 400.
+function cardAttemptEndedError(): Error {
+  return new Error('Mercado Pago: the card payment attempt has ended; the card must be submitted again.')
 }
 
 export default MercadoPagoPaymentProviderService

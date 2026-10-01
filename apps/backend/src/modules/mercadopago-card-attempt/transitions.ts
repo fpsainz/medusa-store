@@ -3,6 +3,7 @@ import {
   CARD_ATTEMPT_STALE_AUTHORIZING_MINUTES,
   type CardAttemptState,
   PAST_DEADLINE_SQL,
+  QUIET_PERIOD_ELAPSED_SQL,
 } from "./attempt-states"
 
 // The state transitions of a card attempt, exactly as approved in INV-009
@@ -31,6 +32,7 @@ export type TransitionName =
   | "resolve_expired_manually"
   | "fail_expired_manually"
   | "resolve_from_unknown"
+  | "fail_unknown_without_order"
 
 export type TransitionDefinition = {
   rule: string
@@ -47,7 +49,7 @@ export type TransitionDefinition = {
 }
 
 const ORDER_ID_FREE_OR_SAME = `(mercadopago_order_id IS NULL OR mercadopago_order_id = ?)`
-const STALE_AUTHORIZING_SQL = `authorizing_at < now() - interval '${CARD_ATTEMPT_STALE_AUTHORIZING_MINUTES} minutes'`
+export const STALE_AUTHORIZING_SQL = `authorizing_at < now() - interval '${CARD_ATTEMPT_STALE_AUTHORIZING_MINUTES} minutes'`
 
 export const CARD_ATTEMPT_TRANSITIONS: Record<TransitionName, TransitionDefinition> = {
   // Rule 2: a new submission, a removed session or the deadline replaces a
@@ -97,7 +99,8 @@ export const CARD_ATTEMPT_TRANSITIONS: Record<TransitionName, TransitionDefiniti
     set: `mercadopago_order_id = ?`, where: ORDER_ID_FREE_OR_SAME,
     destroysToken: true, endsAttempt: true,
   },
-  // Rule 10: the deadline passed while the attempt was open.
+  // Rule 10: kept for the table of INV-009, but no longer triggered by the
+  // deadline (ADR-016); nothing in the application calls it.
   expire: {
     rule: "10", from: ["authorizing", "unknown"], to: "expired",
     where: PAST_DEADLINE_SQL, destroysToken: true, endsAttempt: true,
@@ -117,6 +120,16 @@ export const CARD_ATTEMPT_TRANSITIONS: Record<TransitionName, TransitionDefiniti
   resolve_from_unknown: {
     rule: "12", from: ["unknown"], to: "resolved",
     where: `mercadopago_order_id = ?`, destroysToken: true, endsAttempt: true,
+  },
+  // Rule 13 (ADR-016): past the deadline and the quiet period Q, a search
+  // found no Order for the attempt. Never when an Order is recorded: a
+  // webhook that recorded one first makes this affect 0 rows. The search
+  // horizon H is appended by the service.
+  fail_unknown_without_order: {
+    rule: "13", from: ["unknown"], to: "failed",
+    set: `last_error_class = ?`,
+    where: `mercadopago_order_id IS NULL AND ${PAST_DEADLINE_SQL} AND ${QUIET_PERIOD_ELAPSED_SQL}`,
+    destroysToken: true, endsAttempt: true,
   },
 }
 
@@ -175,6 +188,20 @@ export function buildRecordOrderStatement(attemptId: string, orderId: string): T
       `WHERE id = ? AND deleted_at IS NULL AND state IN ('authorizing', 'unknown') ` +
       `AND mercadopago_order_id IS NULL RETURNING id`,
     bindings: [orderId, attemptId],
+  }
+}
+
+// Retention (ADR-016): past the deadline the ciphertext is destroyed whatever
+// the state, without a transition. Touches only the ciphertext and its
+// destruction fields; idempotent (a second call affects no row).
+export function buildRetentionDestroyTokenStatement(attemptId: string): TransitionStatement {
+  return {
+    sql:
+      `UPDATE ${TABLE} SET encrypted_card_token = NULL, ` +
+      `token_destroyed_at = COALESCE(token_destroyed_at, now()), updated_at = now() ` +
+      `WHERE id = ? AND deleted_at IS NULL AND encrypted_card_token IS NOT NULL ` +
+      `AND ${PAST_DEADLINE_SQL} RETURNING id`,
+    bindings: [attemptId],
   }
 }
 
